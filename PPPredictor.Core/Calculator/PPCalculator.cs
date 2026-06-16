@@ -109,7 +109,7 @@ namespace PPPredictor.Core.Calculator
             }
         }
 
-        internal async Task GetPlayerScores(PPPMapPool mapPool, int pageSize, int largePageSize, bool fetchOnePage = false)
+        internal async Task GetPlayerScores(PPPMapPool mapPool, int pageSize, int largePageSize, bool fetchOnePage = false, Action<int, int> progressChanged = null)
         {
             try
             {
@@ -131,6 +131,11 @@ namespace PPPredictor.Core.Calculator
                     }
                     else {
                         playerscores = await GetRecentScores(userId, hasNoScores ? largePageSize: pageSize, page, mapPool);
+                        if (playerscores.Total > 0 && playerscores.ItemsPerPage > 0)
+                        {
+                            int loadedScores = (int)Math.Min(playerscores.Page * playerscores.ItemsPerPage, playerscores.Total);
+                            progressChanged?.Invoke(loadedScores, (int)playerscores.Total);
+                        }
                         if (playerscores.Page * playerscores.ItemsPerPage >= playerscores.Total || fetchOnePage)
                         {
                             hasMoreData = false;

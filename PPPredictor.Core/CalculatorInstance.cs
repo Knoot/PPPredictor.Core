@@ -25,6 +25,11 @@ namespace PPPredictor.Core
             Logging.OnMessage += (sender, message) => OnMessage?.Invoke(this, message);
         }
 
+        public DateTime LastSessionReset
+        {
+            get => settings.LastSessionReset;
+        }
+
         public static async Task<CalculatorInstance> CreateAsync(Settings settings, Dictionary<string, LeaderboardData> dctLeaderboardData, Func<PPPBeatMapInfo, PPPBeatMapInfo> scoreSaberLookUpFunction)
         {
             var instance = new CalculatorInstance(settings);
@@ -191,11 +196,11 @@ namespace PPPredictor.Core
             );
         }
 
-        public async Task GetPlayerScores(Leaderboard leaderBoard, string mapPoolId, int pageSize, int largePageSize, bool fetchOnePage = false)
+        public async Task GetPlayerScores(Leaderboard leaderBoard, string mapPoolId, int pageSize, int largePageSize, bool fetchOnePage = false, Action<int, int> progressChanged = null)
         {
             (PPCalculator calculator, PPPMapPool mapPool) = GetCalculatorAndMapPool(leaderBoard, mapPoolId);
             await SemaphoreFunction(calculator.Semaphore,
-                () => Task.Run(() => calculator.GetPlayerScores(mapPool, pageSize, largePageSize, fetchOnePage))
+                () => Task.Run(() => calculator.GetPlayerScores(mapPool, pageSize, largePageSize, fetchOnePage, progressChanged))
             );
         }
 
