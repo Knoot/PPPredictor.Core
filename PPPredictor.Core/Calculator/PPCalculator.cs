@@ -213,50 +213,50 @@ namespace PPPredictor.Core.Calculator
                     if (pp > 0)
                     {
                         double ppAfterPlay = 0;
+                        double ppBeforePlay = lsScores[lsScores.Count - 1].WeightedSum;
                         double previousPP = oldScore?.Pp ?? 0;
 
                         if (oldScore != null && pp <= oldScore.Pp)
                         {
-                            ppAfterPlay = currentTotalPP;
+                            return new PPGainResult(currentTotalPP, 0, pp - previousPP, _settings.PpGainCalculationType);
                         }
-                        else
+
+                        int insertionIndex = lsScores.BinarySearch(
+                            new ShortScore("", pp),
+                            Comparer<ShortScore>.Create((a, b) => b.Pp.CompareTo(a.Pp))
+                        );
+                        if (insertionIndex < 0)
                         {
-                            int insertionIndex = lsScores.BinarySearch(
-                                new ShortScore("", pp),
-                                Comparer<ShortScore>.Create((a, b) => b.Pp.CompareTo(a.Pp))
-                            );
-                            if (insertionIndex < 0)
-                            {
-                                insertionIndex = ~insertionIndex;
-                            }
-
-                            if (insertionIndex > 0)
-                            {
-                                ppAfterPlay = lsScores[insertionIndex - 1].WeightedSum;
-                            }
-                            ppAfterPlay += WeightPP(pp, insertionIndex + 1, mapPool);
-
-                            int weightIndexAdd = 2;
-
-                            for (int i = insertionIndex; i < lsScores.Count; i++)
-                            {
-                                ShortScore score = lsScores[i];
-                                if (score.Searchstring == mapSearchString)
-                                {
-                                    weightIndexAdd--;
-                                    continue;
-                                }
-                                double weightedScore = WeightPP(score.Pp, i + weightIndexAdd, mapPool);
-                                if (weightedScore < SCORETHRESHOLD)
-                                {
-                                    break;
-                                }
-                                ppAfterPlay += weightedScore;
-                            }
+                            insertionIndex = ~insertionIndex;
                         }
 
+                        if (insertionIndex > 0)
+                        {
+                            ppAfterPlay = lsScores[insertionIndex - 1].WeightedSum;
+                        }
+                        ppAfterPlay += WeightPP(pp, insertionIndex + 1, mapPool);
 
-                        return new PPGainResult(Math.Round(ppAfterPlay, 2, MidpointRounding.AwayFromZero), Zeroizer(Math.Round(ppAfterPlay - currentTotalPP, 2, MidpointRounding.AwayFromZero), 0.02), pp - previousPP, _settings.PpGainCalculationType);
+                        int weightIndexAdd = 2;
+
+                        for (int i = insertionIndex; i < lsScores.Count; i++)
+                        {
+                            ShortScore score = lsScores[i];
+                            if (score.Searchstring == mapSearchString)
+                            {
+                                weightIndexAdd--;
+                                continue;
+                            }
+                            double weightedScore = WeightPP(score.Pp, i + weightIndexAdd, mapPool);
+                            if (weightedScore < SCORETHRESHOLD)
+                            {
+                                break;
+                            }
+                            ppAfterPlay += weightedScore;
+                        }
+
+                        double ppGainWeighted = Zeroizer(Math.Round(ppAfterPlay - ppBeforePlay, 2, MidpointRounding.AwayFromZero), 0.02);
+                        double ppTotal = Math.Round(currentTotalPP + ppGainWeighted, 2, MidpointRounding.AwayFromZero);
+                        return new PPGainResult(ppTotal, ppGainWeighted, pp - previousPP, _settings.PpGainCalculationType);
                     }
                     return new PPGainResult(currentTotalPP, pp, oldScore != null ? -oldScore.Pp : 0, _settings.PpGainCalculationType);
                 }

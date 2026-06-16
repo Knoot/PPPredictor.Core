@@ -171,7 +171,7 @@ namespace PPPredictor.Core.UnitTest.LeaderBoard
 
             //Improve score
             gain = ci.GetPlayerScorePPGain(Enums.Leaderboard.ScoreSaber, "-1", "HASH_10", 299);
-            Assert.AreEqual(gain.PpGainWeighted, 7.29);
+            Assert.AreEqual(7.30, gain.PpGainWeighted, 0.001);
 
             //Improving best score
             gain = ci.GetPlayerScorePPGain(Enums.Leaderboard.ScoreSaber, "-1", "HASH_0", 333);
@@ -189,6 +189,11 @@ namespace PPPredictor.Core.UnitTest.LeaderBoard
             gain = ci.GetPlayerScorePPGain(Enums.Leaderboard.ScoreSaber, "-1", "HASH_0", 200);
             Assert.AreEqual(gain.PpGainWeighted, 0);
             Assert.AreEqual(gain.PpGainRaw, -100);
+
+            dctMapPool["-1"].CurrentPlayer.Pp = 9000;
+            gain = ci.GetPlayerScorePPGain(Enums.Leaderboard.ScoreSaber, "-1", "HASH_10", 299);
+            Assert.AreEqual(9007.30, gain.PpTotal, 0.001);
+            Assert.AreEqual(7.30, gain.PpGainWeighted, 0.001);
 
             dctMapPool["-1"].LsScores = null;
             ci = await CalculatorInstance.CreateAsyncMock<MockScoreSaberApi, MockBeatLeader, MockHitBloq, MockAccSaber>(
