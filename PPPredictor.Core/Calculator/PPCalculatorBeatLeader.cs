@@ -278,11 +278,11 @@ namespace PPPredictor.Core.Calculator
 
         override public async Task UpdateAvailableMapPools()
         {
-            if (!_dctMapPool.ContainsKey("-1")) _dctMapPool.Add("-1", new PPPMapPool("-1", MapPoolType.Default, $"General", accumulationConstant, 0, new BeatLeaderPPPCurve(), LeaderboardContext.BeatLeaderDefault));
-            if (!_dctMapPool.ContainsKey("-2")) _dctMapPool.Add("-2", new PPPMapPool("-2", MapPoolType.Default, $"No modifiers", accumulationConstant, 1, new BeatLeaderPPPCurve(), LeaderboardContext.BeatLeaderNoModifiers));
-            if (!_dctMapPool.ContainsKey("-3")) _dctMapPool.Add("-3", new PPPMapPool("-3", MapPoolType.Default, $"No pauses", accumulationConstant, 2, new BeatLeaderPPPCurve(), LeaderboardContext.BeatLeaderNoPauses));
-            if (!_dctMapPool.ContainsKey("-4")) _dctMapPool.Add("-4", new PPPMapPool("-4", MapPoolType.Default, $"Golf", accumulationConstant, 3, new BeatLeaderPPPCurve(), LeaderboardContext.BeatLeaderGolf));
-            if (!_dctMapPool.ContainsKey("-5")) _dctMapPool.Add("-5", new PPPMapPool("-5", MapPoolType.Default, $"SCPM", accumulationConstant, 4, new BeatLeaderPPPCurve(), LeaderboardContext.BeatLeaderSCPM));
+            EnsureBeatLeaderMapPool("-1", "General", 0, LeaderboardContext.BeatLeaderDefault);
+            EnsureBeatLeaderMapPool("-2", "No modifiers", 1, LeaderboardContext.BeatLeaderNoModifiers);
+            EnsureBeatLeaderMapPool("-3", "No pauses", 2, LeaderboardContext.BeatLeaderNoPauses);
+            EnsureBeatLeaderMapPool("-4", "Golf", 3, LeaderboardContext.BeatLeaderGolf);
+            EnsureBeatLeaderMapPool("-5", "SCPM", 4, LeaderboardContext.BeatLeaderSCPM);
 
             //BeatLeaderEventList beatLeaderEventList = await beatleaderapi.GetEvents();
             BeatLeaderEventList beatLeaderEventList = new BeatLeaderEventList();
@@ -310,6 +310,22 @@ namespace PPPredictor.Core.Calculator
             }
             SendMapPoolRefreshed();
             return;
+        }
+
+        private void EnsureBeatLeaderMapPool(string id, string name, int sortIndex, LeaderboardContext leaderboardContext)
+        {
+            if (!_dctMapPool.TryGetValue(id, out PPPMapPool mapPool))
+            {
+                _dctMapPool.Add(id, new PPPMapPool(id, MapPoolType.Default, name, accumulationConstant, sortIndex, new BeatLeaderPPPCurve(), leaderboardContext));
+                return;
+            }
+
+            mapPool.MapPoolType = MapPoolType.Default;
+            mapPool.MapPoolName = name;
+            mapPool.AccumulationConstant = accumulationConstant;
+            mapPool.SortIndex = sortIndex;
+            mapPool.Curve = new BeatLeaderPPPCurve();
+            mapPool.LeaderboardContext = leaderboardContext;
         }
 
         internal override bool IsScoreSetOnCurrentMapPool(PPPMapPool mapPool, PPPScoreSetData score)

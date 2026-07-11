@@ -67,7 +67,7 @@ namespace PPPredictor.Core.DataType.MapPool
         public byte[] IconData { get => _iconData; set => _iconData = value; }
         public double Popularity { get => _popularity; set => _popularity = value; }
         public string SyncUrl { get => _syncUrl; set => _syncUrl = value; }
-        public LeaderboardContext LeaderboardContext { get => _leaderboardContext; }
+        public LeaderboardContext LeaderboardContext { get => _leaderboardContext; set => _leaderboardContext = value; }
         public bool IsPlayerFound { get => isPlayerFound; set => isPlayerFound = value; }
         [JsonIgnore]
         public Dictionary<int, double> DctWeightLookup { get => dctWeightLookup; }

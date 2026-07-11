@@ -3,8 +3,10 @@ using PPPredictor.Core.DataType.Curve;
 using PPPredictor.Core.DataType.MapPool;
 using PPPredictor.Core.DataType.Score;
 using PPPredictor.Core.Interface;
+using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using static PPPredictor.Core.DataType.Enums;
@@ -18,6 +20,7 @@ namespace PPPredictor.Core.Calculator
         private readonly string unsetPoolId = "-1";
         private Dictionary<string, List<ShortScore>> dctScores = new Dictionary<string, List<ShortScore>>();
         private Dictionary<string, double> dctScoresSum = new Dictionary<string, double>();
+        private bool accSaberMapCacheLoaded;
 
         public PPCalculatorAccSaber(Dictionary<string, PPPMapPool> dctMapPool, Settings settings) : base(dctMapPool, settings, Leaderboard.AccSaber)
         {
@@ -139,6 +142,10 @@ namespace PPPredictor.Core.Calculator
             {
                 if (mapPool.Id == unsetPoolId) return;
                 mapPool.LsMapPoolEntries.Clear();
+                if (LoadAccSaberMapCache())
+                {
+                    return;
+                }
                 List<AccSaberRankedMap> rankedSongs = new List<AccSaberRankedMap>();
                 if (mapPool.MapPoolType != MapPoolType.Default)
                 {
@@ -151,7 +158,7 @@ namespace PPPredictor.Core.Calculator
                 }
                 foreach (AccSaberRankedMap song in rankedSongs)
                 {
-                    mapPool.LsLeaderboadInfo.Add(new ShortScore(CreateSeachString(song.songHash, "SoloStandard", (int)ParsingUtil.ParseDifficultyNameToInt(song.difficulty)), new PPPStarRating(song.complexity), DateTime.Now, song.categoryDisplayName));
+                    AddLeaderboardInfo(mapPool, song.songHash, song.difficulty, song.complexity, song.categoryDisplayName);
                 }
             }
             catch (Exception ex)
@@ -208,8 +215,13 @@ namespace PPPredictor.Core.Calculator
         {
             try
             {
-                var defaultMapPool = new PPPMapPool(MapPoolType.Default, $"☞ Select a map pool ☜", 0, 0, CurveParser.ParseToCurve(new CurveInfo(CurveType.AccSaber)), 0);
-                if (!_dctMapPool.ContainsKey(defaultMapPool.Id)) _dctMapPool.Add(defaultMapPool.Id, defaultMapPool);
+                EnsureAccSaberMapPools();
+
+                if (LoadAccSaberMapCache())
+                {
+                    SendMapPoolRefreshed();
+                    return;
+                }
 
                 List<AccSaberMapPool> mapPool = await accsaberapi.GetAccSaberMapPools();
                 //check if this map pool is already in list
@@ -234,6 +246,11 @@ namespace PPPredictor.Core.Calculator
                     var overallMapPool = new PPPMapPool("overall", "overall", MapPoolType.Default, "Overall", 0, 0, CurveParser.ParseToCurve(new CurveInfo(CurveType.AccSaber)), string.Empty);
                     if (!_dctMapPool.ContainsKey(overallMapPool.Id)) _dctMapPool.Add(overallMapPool.Id, overallMapPool);
                 }
+                if (_dctMapPool.TryGetValue("overall", out PPPMapPool allMapsPool))
+                {
+                    await InternalUpdateMapPoolDetails(allMapsPool);
+                    allMapsPool.DtUtcLastRefresh = DateTime.UtcNow;
+                }
                 SendMapPoolRefreshed();
             }
             catch (Exception ex)
@@ -245,6 +262,175 @@ namespace PPPredictor.Core.Calculator
         internal override List<PPPMapPoolShort> GetMapPools()
         {
             return _dctMapPool.Values.OrderBy(x => x.SortIndex).Select(x => (PPPMapPoolShort)x).ToList();
+        }
+
+        internal override PPPMapPoolShort FindMapPoolForBeatMapInfo(PPPBeatMapInfo beatMapInfo)
+        {
+            if (beatMapInfo == null || string.IsNullOrEmpty(beatMapInfo.CustomLevelHash))
+            {
+                return null;
+            }
+
+            LoadAccSaberMapCache();
+            string searchString = CreateSeachString(beatMapInfo.CustomLevelHash, beatMapInfo.BeatmapKey);
+            ShortScore leaderboardInfo = _dctMapPool.Values
+                .SelectMany(x => x.LsLeaderboadInfo ?? new List<ShortScore>())
+                .FirstOrDefault(x => x.Searchstring == searchString);
+            if (leaderboardInfo == null)
+            {
+                return null;
+            }
+
+            string categoryId = NormalizeCategoryToPoolId(leaderboardInfo.Category);
+            if (string.IsNullOrEmpty(categoryId) || !_dctMapPool.TryGetValue(categoryId, out PPPMapPool mapPool))
+            {
+                return null;
+            }
+
+            return mapPool;
+        }
+
+        private void EnsureAccSaberMapPools()
+        {
+            var defaultMapPool = new PPPMapPool(MapPoolType.Default, $"☞ Select a map pool ☜", 0, 0, CurveParser.ParseToCurve(new CurveInfo(CurveType.AccSaber)), 0);
+            if (!_dctMapPool.ContainsKey(defaultMapPool.Id)) _dctMapPool.Add(defaultMapPool.Id, defaultMapPool);
+
+            EnsureAccSaberMapPool("standard", "Standard", 1);
+            EnsureAccSaberMapPool("tech", "Tech", 2);
+            EnsureAccSaberMapPool("true", "True", 3);
+
+            if (!_dctMapPool.ContainsKey("overall"))
+            {
+                var overallMapPool = new PPPMapPool("overall", "overall", MapPoolType.Default, "Overall", 0, 0, CurveParser.ParseToCurve(new CurveInfo(CurveType.AccSaber)), string.Empty);
+                _dctMapPool.Add(overallMapPool.Id, overallMapPool);
+            }
+        }
+
+        private void EnsureAccSaberMapPool(string id, string name, int sortIndex)
+        {
+            if (_dctMapPool.ContainsKey(id))
+            {
+                return;
+            }
+
+            _dctMapPool.Add(id, new PPPMapPool(id, id, MapPoolType.Custom, name, 0, sortIndex, CurveParser.ParseToCurve(new CurveInfo(CurveType.AccSaber)), string.Empty));
+        }
+
+        private bool LoadAccSaberMapCache()
+        {
+            if (accSaberMapCacheLoaded)
+            {
+                return true;
+            }
+            if (string.IsNullOrEmpty(_settings.AccSaberMapCachePath) || !File.Exists(_settings.AccSaberMapCachePath))
+            {
+                return false;
+            }
+
+            try
+            {
+                AccSaberMapCache mapCache = JsonConvert.DeserializeObject<AccSaberMapCache>(File.ReadAllText(_settings.AccSaberMapCachePath));
+                if (mapCache?.content == null)
+                {
+                    return false;
+                }
+
+                EnsureAccSaberMapPools();
+                foreach (PPPMapPool mapPool in _dctMapPool.Values)
+                {
+                    if (mapPool.Id == unsetPoolId)
+                    {
+                        continue;
+                    }
+                    mapPool.LsLeaderboadInfo.Clear();
+                }
+
+                foreach (AccSaberCachedMap map in mapCache.content)
+                {
+                    foreach (AccSaberCachedDifficulty difficulty in map.difficulties ?? new List<AccSaberCachedDifficulty>())
+                    {
+                        string categoryId = NormalizeCategoryToPoolId(difficulty.categoryCode);
+                        string categoryName = GetCategoryDisplayName(categoryId);
+                        if (_dctMapPool.TryGetValue(categoryId, out PPPMapPool categoryPool))
+                        {
+                            AddLeaderboardInfo(categoryPool, map.songHash, difficulty.difficulty, difficulty.complexity, categoryName);
+                        }
+                        if (_dctMapPool.TryGetValue("overall", out PPPMapPool overallPool))
+                        {
+                            AddLeaderboardInfo(overallPool, map.songHash, difficulty.difficulty, difficulty.complexity, categoryName);
+                        }
+                    }
+                }
+
+                DateTime refreshTime = DateTime.UtcNow;
+                foreach (PPPMapPool mapPool in _dctMapPool.Values)
+                {
+                    if (mapPool.Id != unsetPoolId && mapPool.LsLeaderboadInfo.Count > 0)
+                    {
+                        mapPool.DtUtcLastRefresh = refreshTime;
+                    }
+                }
+                accSaberMapCacheLoaded = true;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Logging.ErrorPrint($"PPCalculatorAccSaber LoadAccSaberMapCache Error: {ex.Message}");
+                return false;
+            }
+        }
+
+        private void AddLeaderboardInfo(PPPMapPool mapPool, string songHash, string difficulty, double complexity, string category)
+        {
+            string searchString = CreateSeachString(songHash, "SoloStandard", ParseAccSaberDifficulty(difficulty));
+            if (mapPool.LsLeaderboadInfo.Any(x => x.Searchstring == searchString))
+            {
+                return;
+            }
+
+            mapPool.LsLeaderboadInfo.Add(new ShortScore(searchString, new PPPStarRating(complexity), DateTime.Now, category));
+        }
+
+        private int ParseAccSaberDifficulty(string difficulty)
+        {
+            return ParsingUtil.ParseDifficultyNameToInt((difficulty ?? string.Empty).Replace("_", string.Empty));
+        }
+
+        private string NormalizeCategoryToPoolId(string category)
+        {
+            string value = (category ?? string.Empty).ToLowerInvariant();
+            if (value.Contains("standard")) return "standard";
+            if (value.Contains("tech")) return "tech";
+            if (value.Contains("true")) return "true";
+            return string.Empty;
+        }
+
+        private string GetCategoryDisplayName(string categoryId)
+        {
+            if (_dctMapPool.TryGetValue(categoryId, out PPPMapPool mapPool))
+            {
+                return mapPool.MapPoolName;
+            }
+
+            return categoryId;
+        }
+
+        private class AccSaberMapCache
+        {
+            public List<AccSaberCachedMap> content { get; set; }
+        }
+
+        private class AccSaberCachedMap
+        {
+            public string songHash { get; set; }
+            public List<AccSaberCachedDifficulty> difficulties { get; set; }
+        }
+
+        private class AccSaberCachedDifficulty
+        {
+            public string difficulty { get; set; }
+            public double complexity { get; set; }
+            public string categoryCode { get; set; }
         }
     }
 }

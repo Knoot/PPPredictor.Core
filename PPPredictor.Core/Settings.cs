@@ -11,6 +11,7 @@ namespace PPPredictor.Core
         private int refetchMapInfoAfterDays;
         private DateTime lastSessionReset;
         private int resetSessionHours;
+        private string accSaberMapCachePath;
 
         private bool isScoreSaberEnabled;
         private bool isBeatLeaderEnabled;
@@ -18,7 +19,7 @@ namespace PPPredictor.Core
         private bool isAccSaberEnabled;
         private string userId;
 
-        public Settings(bool isScoreSaberEnabled, bool isBeatLeaderEnabled, bool isHitbloqEnabled, bool isAccSaberEnabled, string userId, PPGainCalculationType ppGainCalculationType, MapPoolSorting hitbloqMapPoolSorting, string platformUserId, int refetchMapInfoAfterDays, DateTime lastSessionReset, int resetSessionHours)
+        public Settings(bool isScoreSaberEnabled, bool isBeatLeaderEnabled, bool isHitbloqEnabled, bool isAccSaberEnabled, string userId, PPGainCalculationType ppGainCalculationType, MapPoolSorting hitbloqMapPoolSorting, string platformUserId, int refetchMapInfoAfterDays, DateTime lastSessionReset, int resetSessionHours, string accSaberMapCachePath = "")
         {
             this.isScoreSaberEnabled = isScoreSaberEnabled;
             this.isBeatLeaderEnabled = isBeatLeaderEnabled;
@@ -31,6 +32,7 @@ namespace PPPredictor.Core
             this.refetchMapInfoAfterDays = refetchMapInfoAfterDays;
             this.lastSessionReset = lastSessionReset;
             this.resetSessionHours = resetSessionHours;
+            this.accSaberMapCachePath = accSaberMapCachePath;
         }
 
         public bool IsScoreSaberEnabled { get => isScoreSaberEnabled; set => isScoreSaberEnabled = value; }
@@ -44,6 +46,7 @@ namespace PPPredictor.Core
         internal MapPoolSorting HitbloqMapPoolSorting { get => hitbloqMapPoolSorting; set => hitbloqMapPoolSorting = value; }
         internal string PlatformUserId { get => platformUserId; set => platformUserId = value; }
         internal int RefetchMapInfoAfterDays { get => refetchMapInfoAfterDays; set => refetchMapInfoAfterDays = value; }
+        internal string AccSaberMapCachePath { get => accSaberMapCachePath; set => accSaberMapCachePath = value; }
     }
 }
 

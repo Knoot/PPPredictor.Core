@@ -138,6 +138,12 @@ namespace PPPredictor.Core
             return calculator.GetPlayerScorePPGain(mapSearchString, pp, mapPool);
         }
 
+        public bool HasScoreDataForPPGain(Leaderboard leaderBoard, string mapPoolId)
+        {
+            (PPCalculator calculator, PPPMapPool mapPool) = GetCalculatorAndMapPool(leaderBoard, mapPoolId);
+            return calculator.HasScoreDataForPPGain(mapPool);
+        }
+
         public PPPMapPoolShort FindPoolWithPlayListId(Leaderboard leaderBoard, string playListId)
         {
             PPCalculator calculator = GetCalculator(leaderBoard);
@@ -147,6 +153,12 @@ namespace PPPredictor.Core
         {
             PPCalculator calculator = GetCalculator(leaderBoard);
             return calculator.FindPoolWithSyncURL(syncUrl);
+        }
+
+        public PPPMapPoolShort FindMapPoolForBeatMapInfo(Leaderboard leaderBoard, PPPBeatMapInfo beatMapInfo)
+        {
+            PPCalculator calculator = GetCalculator(leaderBoard);
+            return calculator.FindMapPoolForBeatMapInfo(beatMapInfo);
         }
 
         public List<PPPMapPoolShort> GetMapPools(Leaderboard leaderBoard)

@@ -141,6 +141,7 @@ namespace PPPredictor.Core.Calculator
                             hasMoreData = false;
                         }
                     }
+                    bool fetchedAllScores = _leaderboardInfo.HasGetAllScoresFunctionality && (!_leaderboardInfo.HasGetRecentScoresFunctionality || hasNoScores);
                     foreach (PPPScore scores in playerscores.LsPPPScore)
                     {
                         string searchString = CreateSeachString(scores.SongHash, scores.GameMode, (int)scores.Difficulty1);
@@ -154,11 +155,11 @@ namespace PPPredictor.Core.Calculator
                             }
                             else
                             {
-                                if (mapPool.DtLastScoreSet >= scores.TimeSet)
+                                if (!fetchedAllScores && mapPool.DtLastScoreSet >= scores.TimeSet)
                                 {
                                     hasMoreData = false;
                                 }
-                                else
+                                else if (fetchedAllScores || newScore.Pp > previousScore.Pp)
                                 {
                                     lsNewScores.Add(newScore);
                                 }
@@ -170,14 +171,16 @@ namespace PPPredictor.Core.Calculator
                     await Task.Delay(_leaderboardInfo.TaskDelayValue);
                 }
                 //Update after fetching all data. So when closing while fetching the incomplete data is not saved.
-                foreach (ShortScore newScore in lsNewScores)
+                foreach (ShortScore newScore in lsNewScores
+                    .GroupBy(x => x.Searchstring)
+                    .Select(x => x.OrderByDescending(score => score.Pp).First()))
                 {
                     ShortScore previousScore = mapPool.LsScores.Find(x => x.Searchstring == newScore.Searchstring);
                     if (previousScore == null)
                     {
                         mapPool.LsScores.Add(newScore);
                     }
-                    else
+                    else if (newScore.Pp > previousScore.Pp)
                     {
                         previousScore.Pp = newScore.Pp;
                     }
@@ -194,6 +197,11 @@ namespace PPPredictor.Core.Calculator
         internal virtual PPGainResult GetPlayerScorePPGain(string mapSearchString, double pp, PPPMapPool mapPool)
         {
             return GetPlayerScorePPGainInternal(mapPool.LsScores, mapSearchString, pp, mapPool.CurrentPlayer.Pp, mapPool);
+        }
+
+        internal virtual bool HasScoreDataForPPGain(PPPMapPool mapPool)
+        {
+            return mapPool?.LsScores != null && mapPool.LsScores.Count > 0;
         }
 
         internal PPGainResult GetPlayerScorePPGainInternal(List<ShortScore> lsScores, string mapSearchString, double pp, double currentTotalPP, PPPMapPool mapPool)
@@ -264,12 +272,18 @@ namespace PPPredictor.Core.Calculator
                 {
                     return new PPGainResult(pp, pp, pp, _settings.PpGainCalculationType);
                 }
+                else
+                {
+                    return new PPGainResult(currentTotalPP, 0, 0, _settings.PpGainCalculationType);
+                }
             }
             catch (Exception ex)
             {
                 Logging.ErrorPrint($"PPPredictor {_leaderboardInfo?.LeaderboardName} GetPlayerScorePPGain Error: {ex.Message}");
             }
-            return new PPGainResult(currentTotalPP, pp, pp, _settings.PpGainCalculationType);
+            return currentTotalPP == 0
+                ? new PPGainResult(pp, pp, pp, _settings.PpGainCalculationType)
+                : new PPGainResult(currentTotalPP, 0, 0, _settings.PpGainCalculationType);
         }
 
         internal async Task<RankGainResult> GetPlayerRankGain(double pp, PPPMapPool mapPool)
@@ -468,6 +482,11 @@ namespace PPPredictor.Core.Calculator
         }
 
         internal virtual PPPMapPoolShort FindPoolWithPlayListId(string playListId)
+        {
+            return null;
+        }
+
+        internal virtual PPPMapPoolShort FindMapPoolForBeatMapInfo(PPPBeatMapInfo beatMapInfo)
         {
             return null;
         }
