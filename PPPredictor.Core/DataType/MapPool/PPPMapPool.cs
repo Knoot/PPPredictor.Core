@@ -31,6 +31,7 @@ namespace PPPredictor.Core.DataType.MapPool
         private string _syncUrl;
         private LeaderboardContext _leaderboardContext;
         private bool isPlayerFound;
+        private bool _hasScoreDataFetched;
         private Dictionary<int, double> dctWeightLookup;
         private Dictionary<string, int> _dctScorePositionLookup = new Dictionary<string, int>();
         private string _customLeaderboardUserId;
@@ -70,6 +71,8 @@ namespace PPPredictor.Core.DataType.MapPool
         public LeaderboardContext LeaderboardContext { get => _leaderboardContext; set => _leaderboardContext = value; }
         public bool IsPlayerFound { get => isPlayerFound; set => isPlayerFound = value; }
         [JsonIgnore]
+        public bool HasScoreDataFetched { get => _hasScoreDataFetched; set => _hasScoreDataFetched = value; }
+        [JsonIgnore]
         public Dictionary<int, double> DctWeightLookup { get => dctWeightLookup; }
         public string CustomLeaderboardUserId { get => _customLeaderboardUserId; set => _customLeaderboardUserId = value; }
         public Dictionary<string, int> DctScorePositionLookup { get => _dctScorePositionLookup; set => _dctScorePositionLookup = value; }
@@ -96,6 +99,7 @@ namespace PPPredictor.Core.DataType.MapPool
             _syncUrl = string.Empty;
             _leaderboardContext = LeaderboardContext.None;
             isPlayerFound = true;
+            _hasScoreDataFetched = false;
             dctWeightLookup = new Dictionary<int, double>();
             _customLeaderboardUserId = string.Empty;
             _dctScorePositionLookup = new Dictionary<string, int>();

@@ -34,6 +34,10 @@ namespace PPPredictor.Core.Calculator
             foreach (var pool in _dctMapPool.Values)
             {
                 RecalculateScoreWeightedSum(pool);
+                if (pool.LsScores != null && pool.LsScores.Count > 0)
+                {
+                    pool.HasScoreDataFetched = true;
+                }
             }
             _leaderboardInfo = new PPPLeaderboardInfo(leaderboard);
             _settings = settings;
@@ -187,6 +191,7 @@ namespace PPPredictor.Core.Calculator
                 };
                 RecalculateScoreWeightedSum(mapPool);
                 mapPool.DtLastScoreSet = dtNewLastScoreSet > mapPool.DtLastScoreSet ? dtNewLastScoreSet : mapPool.DtLastScoreSet;
+                mapPool.HasScoreDataFetched = true;
             }
             catch (Exception ex)
             {
@@ -201,7 +206,7 @@ namespace PPPredictor.Core.Calculator
 
         internal virtual bool HasScoreDataForPPGain(PPPMapPool mapPool)
         {
-            return mapPool?.LsScores != null && mapPool.LsScores.Count > 0;
+            return mapPool != null && (mapPool.HasScoreDataFetched || (mapPool.LsScores != null && mapPool.LsScores.Count > 0));
         }
 
         internal PPGainResult GetPlayerScorePPGainInternal(List<ShortScore> lsScores, string mapSearchString, double pp, double currentTotalPP, PPPMapPool mapPool)
@@ -268,7 +273,7 @@ namespace PPPredictor.Core.Calculator
                     }
                     return new PPGainResult(currentTotalPP, pp, oldScore != null ? -oldScore.Pp : 0, _settings.PpGainCalculationType);
                 }
-                else if (currentTotalPP == 0) //If you have not set a score yet, total is = the new pp play
+                else if (currentTotalPP == 0 && mapPool.HasScoreDataFetched) //If you have not set a score yet, total is = the new pp play
                 {
                     return new PPGainResult(pp, pp, pp, _settings.PpGainCalculationType);
                 }
@@ -281,7 +286,7 @@ namespace PPPredictor.Core.Calculator
             {
                 Logging.ErrorPrint($"PPPredictor {_leaderboardInfo?.LeaderboardName} GetPlayerScorePPGain Error: {ex.Message}");
             }
-            return currentTotalPP == 0
+            return currentTotalPP == 0 && mapPool.HasScoreDataFetched
                 ? new PPGainResult(pp, pp, pp, _settings.PpGainCalculationType)
                 : new PPGainResult(currentTotalPP, 0, 0, _settings.PpGainCalculationType);
         }
@@ -489,6 +494,11 @@ namespace PPPredictor.Core.Calculator
         internal virtual PPPMapPoolShort FindMapPoolForBeatMapInfo(PPPBeatMapInfo beatMapInfo)
         {
             return null;
+        }
+
+        internal virtual Task<PPPMapPoolShort> FindMapPoolForBeatMapInfoAsync(PPPBeatMapInfo beatMapInfo)
+        {
+            return Task.FromResult(FindMapPoolForBeatMapInfo(beatMapInfo));
         }
 
         internal PPPMapPoolShort FindPoolWithSyncURL(string syncUrl)

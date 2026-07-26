@@ -21,6 +21,7 @@ namespace PPPredictor.Core.Calculator
         private Dictionary<string, List<ShortScore>> dctScores = new Dictionary<string, List<ShortScore>>();
         private Dictionary<string, double> dctScoresSum = new Dictionary<string, double>();
         private bool accSaberMapCacheLoaded;
+        private readonly HashSet<string> accSaberMapLookupMisses = new HashSet<string>();
 
         public PPCalculatorAccSaber(Dictionary<string, PPPMapPool> dctMapPool, Settings settings) : base(dctMapPool, settings, Leaderboard.AccSaber)
         {
@@ -191,6 +192,11 @@ namespace PPPredictor.Core.Calculator
         {
             if(mapPool.MapPoolType != MapPoolType.Default)
             {
+                if (!HasCustomPoolScoreDataForPPGain(mapPool))
+                {
+                    return new PPGainResult(mapPool.CurrentPlayer.Pp, 0, 0, _settings.PpGainCalculationType);
+                }
+
                 return GetPlayerScorePPGainInternal(mapPool.LsScores, mapSearchString, pp, mapPool.CurrentPlayer.Pp, mapPool);
             }
             else
@@ -198,12 +204,37 @@ namespace PPPredictor.Core.Calculator
                 var rankedMapInfo = mapPool.LsLeaderboadInfo.FirstOrDefault(x => x.Searchstring == mapSearchString);
                 if (rankedMapInfo != null)
                 {
-                    PPGainResult ppGain = GetPlayerScorePPGainInternal(dctScores[rankedMapInfo.Category], mapSearchString, pp, dctScoresSum[rankedMapInfo.Category], mapPool);
-                    double otherSum = dctScoresSum.Where(kvp => kvp.Key != rankedMapInfo.Category).Sum(kvp => kvp.Value);
+                    string category = dctScores.Keys.FirstOrDefault(x => NormalizeCategoryToPoolId(x) == NormalizeCategoryToPoolId(rankedMapInfo.Category));
+                    if (category == null || !dctScores.TryGetValue(category, out List<ShortScore> categoryScores) || !dctScoresSum.TryGetValue(category, out double categorySum))
+                    {
+                        return new PPGainResult(mapPool.CurrentPlayer.Pp, 0, 0, _settings.PpGainCalculationType);
+                    }
+
+                    PPGainResult ppGain = GetPlayerScorePPGainInternal(categoryScores, mapSearchString, pp, categorySum, mapPool);
+                    double otherSum = dctScoresSum.Where(kvp => kvp.Key != category).Sum(kvp => kvp.Value);
                     return new PPGainResult(ppGain.PpTotal + otherSum, ppGain.PpGainWeighted, ppGain.PpGainRaw, _settings.PpGainCalculationType);
                 }
-                return new PPGainResult(mapPool.CurrentPlayer.Pp, pp, pp, _settings.PpGainCalculationType);
+                return new PPGainResult(mapPool.CurrentPlayer.Pp, 0, 0, _settings.PpGainCalculationType);
             }
+        }
+
+        internal override bool HasScoreDataForPPGain(PPPMapPool mapPool)
+        {
+            if (mapPool?.MapPoolType == MapPoolType.Default)
+            {
+                return dctScores.Values.Any(x => x.Count > 0);
+            }
+
+            return HasCustomPoolScoreDataForPPGain(mapPool);
+        }
+
+        private static bool HasCustomPoolScoreDataForPPGain(PPPMapPool mapPool)
+        {
+            return mapPool != null
+                && mapPool.CurrentPlayer != null
+                && mapPool.CurrentPlayer.Pp > 0
+                && mapPool.LsScores != null
+                && mapPool.LsScores.Count > 0;
         }
 
         public override string CreateSeachString(string hash, DataType.BeatSaberEncapsulation.BeatmapKey beatmapKey)
@@ -288,6 +319,18 @@ namespace PPPredictor.Core.Calculator
             }
 
             return mapPool;
+        }
+
+        internal override async Task<PPPMapPoolShort> FindMapPoolForBeatMapInfoAsync(PPPBeatMapInfo beatMapInfo)
+        {
+            PPPMapPoolShort mapPool = FindMapPoolForBeatMapInfo(beatMapInfo);
+            if (mapPool != null || beatMapInfo == null || string.IsNullOrEmpty(beatMapInfo.CustomLevelHash))
+            {
+                return mapPool;
+            }
+
+            await LoadAccSaberMapByHash(beatMapInfo.CustomLevelHash);
+            return FindMapPoolForBeatMapInfo(beatMapInfo);
         }
 
         private void EnsureAccSaberMapPools()
@@ -389,6 +432,46 @@ namespace PPPredictor.Core.Calculator
             }
 
             mapPool.LsLeaderboadInfo.Add(new ShortScore(searchString, new PPPStarRating(complexity), DateTime.Now, category));
+        }
+
+        private async Task LoadAccSaberMapByHash(string hash)
+        {
+            string normalizedHash = hash?.ToUpperInvariant();
+            if (string.IsNullOrEmpty(normalizedHash) || accSaberMapLookupMisses.Contains(normalizedHash))
+            {
+                return;
+            }
+
+            try
+            {
+                EnsureAccSaberMapPools();
+                AccSaberMap map = await accsaberapi.GetMapByHash(normalizedHash);
+                if (map?.difficulties == null || map.difficulties.Count == 0)
+                {
+                    accSaberMapLookupMisses.Add(normalizedHash);
+                    return;
+                }
+
+                string songHash = string.IsNullOrEmpty(map.songHash) ? normalizedHash : map.songHash;
+                foreach (AccSaberMapDifficulty difficulty in map.difficulties)
+                {
+                    string categoryId = NormalizeCategoryToPoolId(difficulty.categoryId);
+                    string categoryName = GetCategoryDisplayName(categoryId);
+                    if (_dctMapPool.TryGetValue(categoryId, out PPPMapPool categoryPool))
+                    {
+                        AddLeaderboardInfo(categoryPool, songHash, difficulty.difficulty, difficulty.complexity, categoryName);
+                    }
+                    if (_dctMapPool.TryGetValue("overall", out PPPMapPool overallPool))
+                    {
+                        AddLeaderboardInfo(overallPool, songHash, difficulty.difficulty, difficulty.complexity, categoryName);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                accSaberMapLookupMisses.Add(normalizedHash);
+                Logging.ErrorPrint($"PPCalculatorAccSaber LoadAccSaberMapByHash Error: {ex.Message}");
+            }
         }
 
         private int ParseAccSaberDifficulty(string difficulty)

@@ -8,6 +8,7 @@ namespace PPPredictor.Core.Interface
     {
         Task<List<AccSaberRankedMap>> GetAllRankedMaps();
         Task<List<AccSaberRankedMap>> GetRankedMaps(string mapPool);
+        Task<AccSaberMap> GetMapByHash(string hash);
         Task<List<AccSaberMapPool>> GetAccSaberMapPools();
         Task<AccSaberPlayer> GetAccSaberUserByPool(long userId, string poolIdent);
         Task<List<AccSaberPlayer>> GetPlayerListForMapPool(double page, string mapPoolId);

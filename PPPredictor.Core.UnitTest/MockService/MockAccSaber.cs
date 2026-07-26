@@ -20,6 +20,11 @@ namespace PPPredictor.Core.UnitTest.MockService
             throw new NotImplementedException();
         }
 
+        public Task<AccSaberDataTypes.AccSaberMap> GetMapByHash(string hash)
+        {
+            throw new NotImplementedException();
+        }
+
         public Task<List<AccSaberDataTypes.AccSaberScores>> GetAllScores(string userId)
         {
             throw new NotImplementedException();

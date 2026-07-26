@@ -161,6 +161,12 @@ namespace PPPredictor.Core
             return calculator.FindMapPoolForBeatMapInfo(beatMapInfo);
         }
 
+        public async Task<PPPMapPoolShort> FindMapPoolForBeatMapInfoAsync(Leaderboard leaderBoard, PPPBeatMapInfo beatMapInfo)
+        {
+            PPCalculator calculator = GetCalculator(leaderBoard);
+            return await calculator.FindMapPoolForBeatMapInfoAsync(beatMapInfo);
+        }
+
         public List<PPPMapPoolShort> GetMapPools(Leaderboard leaderBoard)
         {
             PPCalculator calculator = GetCalculator(leaderBoard);

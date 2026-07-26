@@ -20,7 +20,7 @@ namespace PPPredictor.Core
         {
             try
             {
-                return dctDifficultyNameToInt[difficulty.ToUpper()];
+                return dctDifficultyNameToInt[(difficulty ?? string.Empty).Replace("_", string.Empty).ToUpper()];
             }
             catch (Exception ex)
             {
