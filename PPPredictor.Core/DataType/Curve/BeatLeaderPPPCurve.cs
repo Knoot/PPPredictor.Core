@@ -6,6 +6,8 @@ namespace PPPredictor.Core.DataType.Curve
 {
     class BeatLeaderPPPCurve : IPPPCurve
     {
+        private readonly Dictionary<(double, double, int, double, double, double, double), BeatLeaderV4Curve> curves =
+            new Dictionary<(double, double, int, double, double, double, double), BeatLeaderV4Curve>();
         private readonly List<(double, double)> accPointList = new List<(double, double)> {
                 (1.0, 7.424),
                 (0.999, 6.241),
@@ -54,6 +56,18 @@ namespace PPPredictor.Core.DataType.Curve
                     }
                     if (!failed && !(leaderboardContext == LeaderboardContext.BeatLeaderNoPauses && paused))
                     {
+                        var rating = beatMapInfo.ModifiedStarRating;
+                        if (rating.NoteSpan.HasValue)
+                        {
+                            var key = (rating.PredictedAcc, rating.SliderPercentage, rating.Notes, rating.NoteSpan.Value,
+                                rating.AccRating, rating.PassRating, rating.TechRating);
+                            if (!curves.TryGetValue(key, out var curve))
+                            {
+                                if (curves.Count >= 64) curves.Clear();
+                                curves[key] = curve = new BeatLeaderV4Curve(rating);
+                            }
+                            return curve.Calculate(percentage, rating, leaderboardContext == LeaderboardContext.BeatLeaderGolf);
+                        }
                         var (passPP, accPP, techPP) = CalculatePP(percentage, beatMapInfo.ModifiedStarRating.AccRating * beatMapInfo.ModifiedStarRating.Multiplier, beatMapInfo.ModifiedStarRating.PassRating * beatMapInfo.ModifiedStarRating.Multiplier, beatMapInfo.ModifiedStarRating.TechRating * beatMapInfo.ModifiedStarRating.Multiplier, leaderboardContext);
                         var rawPP = Inflate(passPP + accPP + techPP);
                         return rawPP;

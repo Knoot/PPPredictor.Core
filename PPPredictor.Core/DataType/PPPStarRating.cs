@@ -22,6 +22,9 @@ namespace PPPredictor.Core.DataType
         public double Stars { get => _stars; set => _stars = value; }
         [DefaultValue(0d)]
         public double PredictedAcc { get => _predictedAcc; set => _predictedAcc = value; }
+        public double SliderPercentage { get; set; }
+        public int Notes { get; set; }
+        public double? NoteSpan { get; set; }
         [DefaultValue(0d)]
         public double PassRating { get => _passRating; set => _passRating = value; }
         [DefaultValue(0d)] 
@@ -56,6 +59,9 @@ namespace PPPredictor.Core.DataType
                 _rankedBeatLeader = beatLeaderDifficulty.status == (int)Enums.BeatLeaderDifficultyStatus.ranked;
             }
             _predictedAcc = beatLeaderDifficulty.predictedAcc.GetValueOrDefault();
+            SliderPercentage = beatLeaderDifficulty.sliderPercentage.GetValueOrDefault();
+            Notes = beatLeaderDifficulty.notes;
+            NoteSpan = beatLeaderDifficulty.noteSpan;
             _passRating = beatLeaderDifficulty.passRating.GetValueOrDefault();
             _accRating = beatLeaderDifficulty.accRating.GetValueOrDefault();
             _techRating = beatLeaderDifficulty.techRating.GetValueOrDefault();
