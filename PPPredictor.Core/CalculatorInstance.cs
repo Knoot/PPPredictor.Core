@@ -13,16 +13,56 @@ using static PPPredictor.Core.DataType.Enums;
 
 namespace PPPredictor.Core
 {
-    public class CalculatorInstance
+    public class CalculatorInstance : IDisposable
     {
         Dictionary<Leaderboard, PPCalculator> dctCalculator = new Dictionary<Leaderboard, PPCalculator> ();
         public event EventHandler<LoggingMessage> OnMessage;
-        private readonly Settings settings;
+        private Settings settings;
+        private readonly CancellationTokenSource lifetime = new CancellationTokenSource();
+        private readonly CancellationToken lifetimeToken;
+        private int disposed;
+        private readonly object lifetimeGate = new object();
+        private Task shutdown;
+        public bool IsDisposed => Volatile.Read(ref disposed) != 0;
 
         public CalculatorInstance(Settings settings)
         {
             this.settings = settings;
-            Logging.OnMessage += (sender, message) => OnMessage?.Invoke(this, message);
+            lifetimeToken = lifetime.Token;
+            Logging.OnMessage += ForwardMessage;
+        }
+
+        private void ForwardMessage(object sender, LoggingMessage message)
+        {
+            if (!IsDisposed) OnMessage?.Invoke(this, message);
+        }
+
+        public void Dispose()
+        {
+            lock (lifetimeGate)
+            {
+                if (Interlocked.Exchange(ref disposed, 1) != 0) return;
+                Logging.OnMessage -= ForwardMessage;
+                OnMessage = null;
+                lifetime.Cancel();
+            }
+        }
+
+        public Task ShutdownAsync()
+        {
+            lock (lifetimeGate) return shutdown ?? (shutdown = ShutdownCoreAsync());
+        }
+
+        private async Task ShutdownCoreAsync()
+        {
+            Dispose();
+            foreach (var calculator in dctCalculator.Values)
+            {
+                await calculator.Semaphore.WaitAsync().ConfigureAwait(false);
+                calculator.Semaphore.Release();
+            }
+            foreach (var calculator in dctCalculator.Values) calculator.Dispose();
+            lifetime.Dispose();
         }
 
         public DateTime LastSessionReset
@@ -30,18 +70,43 @@ namespace PPPredictor.Core
             get => settings.LastSessionReset;
         }
 
-        public static async Task<CalculatorInstance> CreateAsync(Settings settings, Dictionary<string, LeaderboardData> dctLeaderboardData, Func<PPPBeatMapInfo, PPPBeatMapInfo> scoreSaberLookUpFunction)
+        public static async Task<CalculatorInstance> CreateAsync(Settings settings, Dictionary<string, LeaderboardData> dctLeaderboardData, Func<PPPBeatMapInfo, PPPBeatMapInfo> scoreSaberLookUpFunction, CancellationToken cancellationToken = default)
         {
             var instance = new CalculatorInstance(settings);
-            await instance.InitializeAsync<ScoresaberAPI, BeatleaderAPI, HitbloqAPI, AccSaberApi>(settings, dctLeaderboardData, scoreSaberLookUpFunction);
-            return instance;
+            try
+            {
+                using (cancellationToken.Register(instance.Dispose))
+                {
+                    await instance.InitializeOwnedAsync<ScoresaberAPI, BeatleaderAPI, HitbloqAPI, AccSaberApi>(settings, dctLeaderboardData, scoreSaberLookUpFunction);
+                    return instance;
+                }
+            }
+            catch { await instance.ShutdownAsync(); throw; }
         }
 
         internal static async Task<CalculatorInstance> CreateAsyncMock<SSAPI, BLAPI, HBAPI, ASAPI>(Settings settings, Dictionary<string, LeaderboardData> dctLeaderboardData, Func<PPPBeatMapInfo, PPPBeatMapInfo> scoreSaberLookUpFunction) where SSAPI : IScoresaberAPI, new() where BLAPI : IBeatLeaderAPI, new() where HBAPI : IHitBloqAPI, new() where ASAPI : IAccSaberAPI, new()
         {
             var instance = new CalculatorInstance(settings);
-            await instance.InitializeAsync<SSAPI, BLAPI, HBAPI, ASAPI>(settings, dctLeaderboardData, scoreSaberLookUpFunction);
-            return instance;
+            try
+            {
+                await instance.InitializeOwnedAsync<SSAPI, BLAPI, HBAPI, ASAPI>(settings, dctLeaderboardData, scoreSaberLookUpFunction);
+                return instance;
+            }
+            catch { await instance.ShutdownAsync(); throw; }
+        }
+
+        private async Task InitializeOwnedAsync<SSAPI, BLAPI, HBAPI, ASAPI>(Settings settings, Dictionary<string, LeaderboardData> data, Func<PPPBeatMapInfo, PPPBeatMapInfo> lookup)
+            where SSAPI : IScoresaberAPI, new() where BLAPI : IBeatLeaderAPI, new() where HBAPI : IHitBloqAPI, new() where ASAPI : IAccSaberAPI, new()
+        {
+            var previous = NetworkUtil.RequestCancellation;
+            NetworkUtil.RequestCancellation = lifetimeToken;
+            try
+            {
+                lifetimeToken.ThrowIfCancellationRequested();
+                await InitializeAsync<SSAPI, BLAPI, HBAPI, ASAPI>(settings, data, lookup);
+                lifetimeToken.ThrowIfCancellationRequested();
+            }
+            finally { NetworkUtil.RequestCancellation = previous; }
         }
 
         private async Task InitializeAsync<SSAPI, BLAPI, HBAPI, ASAPI>(Settings settings, Dictionary<string, LeaderboardData> dctLeaderboardData, Func<PPPBeatMapInfo, PPPBeatMapInfo> scoreSaberLookUpFunction) where SSAPI : IScoresaberAPI, new() where BLAPI : IBeatLeaderAPI, new() where HBAPI : IHitBloqAPI, new() where ASAPI : IAccSaberAPI, new()
@@ -80,6 +145,7 @@ namespace PPPredictor.Core
 
         public void AssignSettings(Settings settings)
         {
+            this.settings = settings;
             foreach (var item in dctCalculator.Values)
             {
                 item.Settings = settings;
@@ -271,28 +337,27 @@ namespace PPPredictor.Core
 
         private async Task<T> SemaphoreFunction<T>(SemaphoreSlim sem, Func<Task<T>> function)
         {
-            await sem.WaitAsync(); // Wait for access
+            lifetimeToken.ThrowIfCancellationRequested();
+            await sem.WaitAsync(lifetimeToken);
+            var previous = NetworkUtil.RequestCancellation;
+            NetworkUtil.RequestCancellation = lifetimeToken;
             try
             {
-                return await function();
+                lifetimeToken.ThrowIfCancellationRequested();
+                T result = await function();
+                lifetimeToken.ThrowIfCancellationRequested();
+                return result;
             }
             finally
             {
-                sem.Release(); // Ensure the semaphore is released
+                NetworkUtil.RequestCancellation = previous;
+                sem.Release();
             }
         }
 
-        private async Task SemaphoreFunction(SemaphoreSlim sem, Func<Task> function)
+        private Task SemaphoreFunction(SemaphoreSlim sem, Func<Task> function)
         {
-            await sem.WaitAsync(); // Wait for access
-            try
-            {
-                await function();
-            }
-            finally
-            {
-                sem.Release(); // Ensure the semaphore is released
-            }
+            return SemaphoreFunction(sem, async () => { await function(); return true; });
         }
     }
 }

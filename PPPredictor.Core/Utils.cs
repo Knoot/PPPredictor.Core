@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Net.Http;
+using System.Threading;
 using System.Threading.Tasks;
 using static PPPredictor.Core.DataType.Enums;
 
@@ -33,14 +34,19 @@ namespace PPPredictor.Core
 
     public class NetworkUtil
     {
+        // Calculator operations carry their lifetime through existing API adapters without sharing a global token.
+        private static readonly AsyncLocal<CancellationToken> requestCancellation = new AsyncLocal<CancellationToken>();
+        internal static CancellationToken RequestCancellation { get => requestCancellation.Value; set => requestCancellation.Value = value; }
         internal static async System.Threading.Tasks.Task<T> GetDataAsync<T>(HttpClient client, Leaderboard leaderboard, string callingMethod, string requestUrl, bool allowNotFound = false) where T : new()
         {
+            var cancellation = RequestCancellation;
             for (int attempt = 0; ; attempt++)
             {
+                cancellation.ThrowIfCancellationRequested();
                 bool receivedResponse = false;
                 try
                 {
-                    using (HttpResponseMessage response = await client.GetAsync(requestUrl))
+                    using (HttpResponseMessage response = await client.GetAsync(requestUrl, cancellation))
                     {
                         receivedResponse = true;
                         if (allowNotFound && response.StatusCode == System.Net.HttpStatusCode.NotFound) return default(T);
@@ -54,20 +60,22 @@ namespace PPPredictor.Core
                             // Do not retry earlier than Retry-After or block the calculator for a long rate limit.
                             if (delay <= TimeSpan.FromSeconds(5))
                             {
-                                await Task.Delay(delay > TimeSpan.Zero ? delay : TimeSpan.Zero);
+                                await Task.Delay(delay > TimeSpan.Zero ? delay : TimeSpan.Zero, cancellation);
                                 continue;
                             }
                         }
                         response.EnsureSuccessStatusCode();
                         string result = await response.Content.ReadAsStringAsync();
+                        cancellation.ThrowIfCancellationRequested();
                         T data = JsonConvert.DeserializeObject<T>(result);
                         if (data == null) throw new JsonSerializationException("API returned an empty or null response.");
                         return data;
                     }
                 }
+                catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { throw; }
                 catch (Exception ex) when (!receivedResponse && attempt < 2 && (ex is HttpRequestException || ex is TaskCanceledException))
                 {
-                    await Task.Delay(250 * (attempt + 1));
+                    await Task.Delay(250 * (attempt + 1), cancellation);
                 }
                 catch (Exception ex)
                 {

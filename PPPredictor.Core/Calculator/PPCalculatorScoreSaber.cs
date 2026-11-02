@@ -18,6 +18,11 @@ namespace PPPredictor.Core.Calculator
         internal static readonly float accumulationConstant = 0.965f;
         private Func<PPPBeatMapInfo, PPPBeatMapInfo> scoreSaberLookUpFunction;
         private readonly SSAPI scoresaberAPI;
+        internal override void Dispose()
+        {
+            if (scoresaberAPI is IDisposable disposable) disposable.Dispose();
+            base.Dispose();
+        }
         private readonly TimedAsyncCache<ScoreSaberLeaderboardInfo> mapCache;
 
         public PPCalculatorScoreSaber(Dictionary<string, PPPMapPool> dctMapPool, Settings settings, Func<PPPBeatMapInfo, PPPBeatMapInfo> scoreSaberLookUpFunction)

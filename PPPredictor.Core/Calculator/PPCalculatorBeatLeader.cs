@@ -15,6 +15,11 @@ namespace PPPredictor.Core.Calculator
     class PPCalculatorBeatLeader<BLAPI> : PPCalculator where BLAPI : IBeatLeaderAPI, new ()
     {
         private readonly BLAPI beatleaderapi;
+        internal override void Dispose()
+        {
+            if (beatleaderapi is IDisposable disposable) disposable.Dispose();
+            base.Dispose();
+        }
         private readonly TimedAsyncCache<BeatLeaderSong> songCache;
         private readonly Func<DateTime> utcNow;
         internal static float accumulationConstant = 0.965f;

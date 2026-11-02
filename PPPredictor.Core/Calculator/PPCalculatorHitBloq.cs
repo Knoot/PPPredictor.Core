@@ -15,6 +15,11 @@ namespace PPPredictor.Core.Calculator
     class PPCalculatorHitBloq<HBAPI> : PPCalculator where HBAPI : IHitBloqAPI, new ()
     {
         private readonly HBAPI hitbloqapi;
+        internal override void Dispose()
+        {
+            if (hitbloqapi is IDisposable disposable) disposable.Dispose();
+            base.Dispose();
+        }
         private readonly string unsetPoolId = "-1";
         //Dctionaries defined like here: https://github.com/DaFluffyPotato/hitbloq/blob/1e7bf18f92f1146bf8da2f24769aea072542b6e5/general.py#L24
         private static readonly Dictionary<string, string> dctDiffShorten = new Dictionary<string, string>{

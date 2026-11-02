@@ -11,10 +11,11 @@ using static PPPredictor.Core.DataType.LeaderBoard.AccSaberDataTypes;
 namespace PPPredictor.Core.API
 {
     [ExcludeFromCodeCoverage]
-    internal class AccSaberApi : IAccSaberAPI
+    internal class AccSaberApi : IAccSaberAPI, IDisposable
     {
         private static readonly string baseUrl = "https://api.accsaber.com/v1/";
         private readonly HttpClient client;
+        public void Dispose() { client.Dispose(); }
         private readonly TimedAsyncCache<List<AccSaberMapPool>> categories;
 
         public AccSaberApi() : this(new HttpClient())

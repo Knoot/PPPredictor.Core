@@ -12,10 +12,11 @@ using static PPPredictor.Core.DataType.LeaderBoard.HitBloqDataTypes;
 namespace PPPredictor.Core.API
 {
     [ExcludeFromCodeCoverage]
-    class HitbloqAPI : IHitBloqAPI
+    class HitbloqAPI : IHitBloqAPI, IDisposable
     {
         private static readonly string baseUrl = "https://hitbloq.com";
         private readonly HttpClient client;
+        public void Dispose() { client.Dispose(); }
 
         public HitbloqAPI()
         {

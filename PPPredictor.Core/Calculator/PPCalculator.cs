@@ -20,6 +20,7 @@ namespace PPPredictor.Core.Calculator
         internal Dictionary<string, PPPMapPool> _dctMapPool = new Dictionary<string, PPPMapPool>();
 
         public SemaphoreSlim Semaphore => semaphore;
+        internal virtual void Dispose() { semaphore.Dispose(); }
         internal Func<DateTime> RankCacheUtcNow { get; set; } = () => DateTime.UtcNow;
 
         public Settings Settings { set => _settings = value; }
@@ -82,9 +83,11 @@ namespace PPPredictor.Core.Calculator
             try
             {
                 player = await GetProfile(mapPool);
+                NetworkUtil.RequestCancellation.ThrowIfCancellationRequested();
                 if (player == null || player.IsErrorUser || double.IsNaN(player.Pp) || double.IsInfinity(player.Pp) || player.Pp < 0)
                     throw new InvalidOperationException("Profile fetch did not return a valid player.");
             }
+            catch (OperationCanceledException) when (NetworkUtil.RequestCancellation.IsCancellationRequested) { throw; }
             catch (Exception ex)
             {
                 lock (mapPool.DataLock)
@@ -165,16 +168,19 @@ namespace PPPredictor.Core.Calculator
                 DateTimeOffset dtNewLastScoreSet = new DateTime(2000, 1, 1);
                 while (hasMoreData)
                 {
+                    NetworkUtil.RequestCancellation.ThrowIfCancellationRequested();
                     PPPScoreCollection playerscores = null;
                     if (_leaderboardInfo.HasGetAllScoresFunctionality && (!_leaderboardInfo.HasGetRecentScoresFunctionality || hasNoScores))
                     {
                         playerscores = await GetAllScores(userId, mapPool);
+                        NetworkUtil.RequestCancellation.ThrowIfCancellationRequested();
                         if (playerscores == null || playerscores.IsError) throw new InvalidOperationException("Score fetch failed.");
                         hasMoreData = false;
                     }
                     else
                     {
                         playerscores = await GetRecentScores(userId, hasNoScores ? largePageSize : pageSize, page, mapPool);
+                        NetworkUtil.RequestCancellation.ThrowIfCancellationRequested();
                         if (playerscores == null || playerscores.IsError) throw new InvalidOperationException("Score page fetch failed.");
                         if (playerscores.Page != page) throw new InvalidOperationException("API returned an unexpected scores page.");
                         if (playerscores.Total > 0 && playerscores.ItemsPerPage > 0)
@@ -187,6 +193,7 @@ namespace PPPredictor.Core.Calculator
                             hasMoreData = false;
                         }
                     }
+                    NetworkUtil.RequestCancellation.ThrowIfCancellationRequested();
                     fetchedAllScores = forceFullRefresh || (_leaderboardInfo.HasGetAllScoresFunctionality && (!_leaderboardInfo.HasGetRecentScoresFunctionality || hasNoScores));
                     foreach (PPPScore scores in playerscores.LsPPPScore)
                     {
@@ -220,8 +227,9 @@ namespace PPPredictor.Core.Calculator
                     if (expectedScore != null && hasCompleteCache && expectedScoreFound) hasMoreData = false;
                     if (expectedScore != null && hasCompleteCache && page >= 3) hasMoreData = false;
                     page++;
-                    await Task.Delay(_leaderboardInfo.TaskDelayValue);
+                    await Task.Delay(_leaderboardInfo.TaskDelayValue, NetworkUtil.RequestCancellation);
                 }
+                NetworkUtil.RequestCancellation.ThrowIfCancellationRequested();
                 // Publish scores, lookup indices and weighted sums together; never hold this lock during HTTP requests.
                 lock (mapPool.DataLock)
                 {
@@ -251,6 +259,7 @@ namespace PPPredictor.Core.Calculator
                 }
                 return expectedScoreFound;
             }
+            catch (OperationCanceledException) when (NetworkUtil.RequestCancellation.IsCancellationRequested) { throw; }
             catch (Exception ex)
             {
                 lock (mapPool.DataLock) mapPool.ScoreRefreshFailed = true;
@@ -399,6 +408,7 @@ namespace PPPredictor.Core.Calculator
                 int pageFetchCount = 0;
                 while (needMoreData && pageFetchCount < _leaderboardInfo.PageFetchLimit)
                 {
+                    NetworkUtil.RequestCancellation.ThrowIfCancellationRequested();
                     int indexOfBetterPlayer = rankings.FindLastIndex(x => x.Pp > pp);
                     //Check if the rank before is actually the rank before, gaps can be created when using PPToRank
                     bool isNextRankActuallyNext = indexOfBetterPlayer > -1 && rankings.Count - 1 > indexOfBetterPlayer &&
@@ -434,8 +444,9 @@ namespace PPPredictor.Core.Calculator
                     fetchIndexPage--;
                     pageFetchCount++;
                     bestRankFetched = rankings.Select(x => x.Rank).DefaultIfEmpty(-1).Min();
-                    await Task.Delay(_leaderboardInfo.TaskDelayValue);
+                    await Task.Delay(_leaderboardInfo.TaskDelayValue, NetworkUtil.RequestCancellation);
                 }
+                NetworkUtil.RequestCancellation.ThrowIfCancellationRequested();
                 if (pageFetchCount > 0)
                 {
                     lock (mapPool.DataLock)
@@ -450,6 +461,7 @@ namespace PPPredictor.Core.Calculator
                 double rankCountryAfterPlay = rankings.Where(x => Math.Round(x.Pp, 2, MidpointRounding.AwayFromZero) <= pp && x.Country == player.Country).Select(x => x.CountryRank).DefaultIfEmpty(-1).Min();
                 return new RankGainResult(rankAfterPlay, rankCountryAfterPlay, player, pageFetchCount >= _leaderboardInfo.PageFetchLimit);
             }
+            catch (OperationCanceledException) when (NetworkUtil.RequestCancellation.IsCancellationRequested) { throw; }
             catch (Exception ex)
             {
                 lock (mapPool.DataLock) mapPool.PlayerRankingsRetryAfterUtc = now.AddSeconds(15);
@@ -461,6 +473,7 @@ namespace PPPredictor.Core.Calculator
         private async Task FetchPlayerPageAndAddToList(double fetchIndexPage, PPPMapPool mapPool, List<PPPPlayer> rankings)
         {
             List<PPPPlayer> players = await GetPlayers(fetchIndexPage, mapPool);
+            NetworkUtil.RequestCancellation.ThrowIfCancellationRequested();
             if (players == null || players.Count == 0 || players.Any(x => x == null || x.IsErrorUser
                 || x.Rank <= 0 || double.IsNaN(x.Rank) || double.IsInfinity(x.Rank)
                 || x.Pp < 0 || double.IsNaN(x.Pp) || double.IsInfinity(x.Pp)))

@@ -17,6 +17,11 @@ namespace PPPredictor.Core.Calculator
     class PPCalculatorAccSaber<ASAPI> : PPCalculator where ASAPI : IAccSaberAPI, new ()
     {
         private readonly ASAPI accsaberapi;
+        internal override void Dispose()
+        {
+            if (accsaberapi is IDisposable disposable) disposable.Dispose();
+            base.Dispose();
+        }
         private readonly string unsetPoolId = "-1";
         private Dictionary<string, PPPMapPool> categoryScores = new Dictionary<string, PPPMapPool>();
         private Dictionary<string, PPPMapPool> pendingOverallScores;

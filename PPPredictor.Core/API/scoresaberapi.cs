@@ -9,10 +9,11 @@ using static PPPredictor.Core.DataType.LeaderBoard.ScoreSaberDataTypes;
 namespace PPPredictor.Core.API
 {
     [ExcludeFromCodeCoverage]
-    internal class ScoresaberAPI : IScoresaberAPI
+    internal class ScoresaberAPI : IScoresaberAPI, IDisposable
     {
         private static readonly string baseUrl = "https://scoresaber.com/api/";
         private readonly HttpClient client;
+        public void Dispose() { client.Dispose(); }
 
         public ScoresaberAPI()
         {

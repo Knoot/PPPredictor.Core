@@ -9,10 +9,11 @@ using static PPPredictor.Core.DataType.LeaderBoard.BeatLeaderDataTypes;
 namespace PPPredictor.Core.API
 {
     [ExcludeFromCodeCoverage]
-    class BeatleaderAPI : IBeatLeaderAPI
+    class BeatleaderAPI : IBeatLeaderAPI, IDisposable
     {
         private static readonly string baseUrl = "https://api.beatleader.com";
         private readonly HttpClient client;
+        public void Dispose() { client.Dispose(); }
 
         public BeatleaderAPI()
         {
