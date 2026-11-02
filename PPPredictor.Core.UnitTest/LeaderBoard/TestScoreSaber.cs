@@ -335,9 +335,10 @@ namespace PPPredictor.Core.UnitTest.LeaderBoard
             gain = await ci.GetPlayerRankGain(Leaderboard.ScoreSaber, "-1", 10000);
             Assert.AreEqual(0, gain.RankGainGlobal);
             gain = await ci.GetPlayerRankGain(Leaderboard.ScoreSaber, "-1", 12000);
-            Assert.AreEqual(199, gain.RankGainGlobal);
+            // Rank 2000 belongs to page 40, not 41; the five-page limit ends at rank 1751.
+            Assert.AreEqual(249, gain.RankGainGlobal);
             gain = await ci.GetPlayerRankGain(Leaderboard.ScoreSaber, "-1", 30000);
-            Assert.AreEqual(399, gain.RankGainGlobal);
+            Assert.AreEqual(449, gain.RankGainGlobal);
             Assert.IsTrue(gain.IsRankGainCanceledByLimit);
         }
 

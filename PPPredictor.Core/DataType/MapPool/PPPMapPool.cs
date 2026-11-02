@@ -63,6 +63,8 @@ namespace PPPredictor.Core.DataType.MapPool
         public string PlayListId { get => _playListId; set => _playListId = value; }
         [JsonIgnore]
         public List<PPPPlayer> LsPlayerRankings { get => _lsPlayerRankings; set => _lsPlayerRankings = value; }
+        internal DateTime PlayerRankingsFetchedAtUtc { get; set; }
+        internal DateTime PlayerRankingsRetryAfterUtc { get; set; }
         public DateTime DtUtcLastRefresh { get => _dtUtcLastRefresh; set => _dtUtcLastRefresh = value; }
         public DateTimeOffset DtLastScoreSet { get => _dtLastScoreSet; set => _dtLastScoreSet = value; }
         public string IconUrl { get => _iconUrl; set => _iconUrl = value; }

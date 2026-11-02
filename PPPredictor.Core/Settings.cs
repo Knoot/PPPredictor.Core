@@ -47,6 +47,7 @@ namespace PPPredictor.Core
         internal string PlatformUserId { get => platformUserId; set => platformUserId = value; }
         internal int RefetchMapInfoAfterDays { get => refetchMapInfoAfterDays; set => refetchMapInfoAfterDays = value; }
         internal TimeSpan MapInfoCacheDuration { get; set; } = TimeSpan.FromMinutes(5);
+        internal TimeSpan PlayerRankingCacheDuration { get; set; } = TimeSpan.FromMinutes(5);
         internal string AccSaberMapCachePath { get => accSaberMapCachePath; set => accSaberMapCachePath = value; }
     }
 }
