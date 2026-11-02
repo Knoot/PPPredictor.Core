@@ -135,13 +135,13 @@ namespace PPPredictor.Core
         public PPGainResult GetPlayerScorePPGain(Leaderboard leaderBoard, string mapPoolId, string mapSearchString, double pp)
         {
             (PPCalculator calculator, PPPMapPool mapPool) = GetCalculatorAndMapPool(leaderBoard, mapPoolId);
-            return calculator.GetPlayerScorePPGain(mapSearchString, pp, mapPool);
+            lock (mapPool.DataLock) return calculator.GetPlayerScorePPGain(mapSearchString, pp, mapPool);
         }
 
         public bool HasScoreDataForPPGain(Leaderboard leaderBoard, string mapPoolId)
         {
             (PPCalculator calculator, PPPMapPool mapPool) = GetCalculatorAndMapPool(leaderBoard, mapPoolId);
-            return calculator.HasScoreDataForPPGain(mapPool);
+            lock (mapPool.DataLock) return calculator.HasScoreDataForPPGain(mapPool);
         }
 
         public PPPMapPoolShort FindPoolWithPlayListId(Leaderboard leaderBoard, string playListId)
@@ -164,7 +164,8 @@ namespace PPPredictor.Core
         public async Task<PPPMapPoolShort> FindMapPoolForBeatMapInfoAsync(Leaderboard leaderBoard, PPPBeatMapInfo beatMapInfo)
         {
             PPCalculator calculator = GetCalculator(leaderBoard);
-            return await calculator.FindMapPoolForBeatMapInfoAsync(beatMapInfo);
+            return await SemaphoreFunction(calculator.Semaphore,
+                () => Task.Run(() => calculator.FindMapPoolForBeatMapInfoAsync(beatMapInfo)));
         }
 
         public List<PPPMapPoolShort> GetMapPools(Leaderboard leaderBoard)
@@ -178,7 +179,7 @@ namespace PPPredictor.Core
         public double? GetPersonalBest(Leaderboard leaderBoard, string mapPoolId, string mapSearchString)
         {
             (PPCalculator calculator, PPPMapPool mapPool) = GetCalculatorAndMapPool(leaderBoard, mapPoolId);
-            return calculator.GetPersonalBest(mapSearchString, mapPool);
+            lock (mapPool.DataLock) return calculator.GetPersonalBest(mapSearchString, mapPool);
         }
 
         
@@ -194,7 +195,7 @@ namespace PPPredictor.Core
         public bool IsScoreSetOnCurrentMapPool(Leaderboard leaderBoard, string mapPoolId, PPPScoreSetData data)
         {
             (PPCalculator calculator, PPPMapPool mapPool) = GetCalculatorAndMapPool(leaderBoard, mapPoolId);
-            return calculator.IsScoreSetOnCurrentMapPool(mapPool, data);
+            lock (mapPool.DataLock) return calculator.IsScoreSetOnCurrentMapPool(mapPool, data);
         }
 
         public async Task<PPPBeatMapInfo> GetBeatMapInfoAsync(Leaderboard leaderBoard, string mapPoolId, PPPBeatMapInfo beatMapInfo)
@@ -214,18 +215,18 @@ namespace PPPredictor.Core
             );
         }
 
-        public async Task GetPlayerScores(Leaderboard leaderBoard, string mapPoolId, int pageSize, int largePageSize, bool fetchOnePage = false, Action<int, int> progressChanged = null)
+        public async Task<bool> GetPlayerScores(Leaderboard leaderBoard, string mapPoolId, int pageSize, int largePageSize, bool fetchOnePage = false, Action<int, int> progressChanged = null, PPPScoreSetData expectedScore = null)
         {
             (PPCalculator calculator, PPPMapPool mapPool) = GetCalculatorAndMapPool(leaderBoard, mapPoolId);
-            await SemaphoreFunction(calculator.Semaphore,
-                () => Task.Run(() => calculator.GetPlayerScores(mapPool, pageSize, largePageSize, fetchOnePage, progressChanged))
+            return await SemaphoreFunction(calculator.Semaphore,
+                () => Task.Run(() => calculator.GetPlayerScores(mapPool, pageSize, largePageSize, fetchOnePage, progressChanged, expectedScore))
             );
         }
 
         public bool HasDataRefreshFailed(Leaderboard leaderBoard, string mapPoolId)
         {
             var (_, mapPool) = GetCalculatorAndMapPool(leaderBoard, mapPoolId);
-            return mapPool.ScoreRefreshFailed || mapPool.ProfileRefreshFailed;
+            lock (mapPool.DataLock) return mapPool.ScoreRefreshFailed || mapPool.ProfileRefreshFailed;
         }
 
         public Dictionary<string, LeaderboardData> GetSaveData()
@@ -235,11 +236,18 @@ namespace PPPredictor.Core
             {
                 LeaderboardData data = new LeaderboardData()
                 {
-                    DctMapPool = calculator._dctMapPool
+                    DctMapPool = calculator._dctMapPool.ToDictionary(x => x.Key, x => CopyMapPool(x.Value))
                 };
             dctLeaderboardData.Add(calculator._leaderboardInfo.LeaderboardName, data);
             }
             return dctLeaderboardData;
+        }
+
+        private static PPPMapPool CopyMapPool(PPPMapPool pool)
+        {
+            lock (pool.DataLock)
+                return Newtonsoft.Json.JsonConvert.DeserializeObject<PPPMapPool>(Newtonsoft.Json.JsonConvert.SerializeObject(pool,
+                    new Newtonsoft.Json.JsonSerializerSettings { NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore }));
         }
 
         private (PPCalculator, PPPMapPool) GetCalculatorAndMapPool(Leaderboard leaderBoard, string mapPoolId)

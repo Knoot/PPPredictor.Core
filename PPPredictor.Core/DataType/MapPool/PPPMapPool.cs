@@ -10,6 +10,7 @@ namespace PPPredictor.Core.DataType.MapPool
 {
     public class PPPMapPool
     {
+        internal readonly object DataLock = new object();
         private string _id;
         private string _playListId;
         private MapPoolType _mapPoolType;

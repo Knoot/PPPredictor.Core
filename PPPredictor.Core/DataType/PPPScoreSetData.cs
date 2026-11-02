@@ -6,5 +6,6 @@
         public string userId;
         public int context;
         public string hash;
+        public double? pp;
     }
 }

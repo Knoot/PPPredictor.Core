@@ -20,6 +20,7 @@ namespace PPPredictor.Core.Calculator
         private readonly string unsetPoolId = "-1";
         private Dictionary<string, List<ShortScore>> dctScores = new Dictionary<string, List<ShortScore>>();
         private Dictionary<string, double> dctScoresSum = new Dictionary<string, double>();
+        private (Dictionary<string, List<ShortScore>> Scores, Dictionary<string, double> Sums)? pendingOverallScores;
         private bool accSaberMapCacheLoaded;
         private readonly HashSet<string> accSaberMapLookupMisses = new HashSet<string>();
 
@@ -34,7 +35,8 @@ namespace PPPredictor.Core.Calculator
                 if (!string.IsNullOrEmpty(beatMapInfo.CustomLevelHash))
                 {
                     string searchString = CreateSeachString(beatMapInfo.CustomLevelHash, beatMapInfo.BeatmapKey);
-                    var cachedInfo = mapPool.LsLeaderboadInfo.FirstOrDefault(x => x.Searchstring == searchString);
+                    ShortScore cachedInfo;
+                    lock (mapPool.DataLock) cachedInfo = mapPool.LsLeaderboadInfo.FirstOrDefault(x => x.Searchstring == searchString);
                     if(cachedInfo != null)
                     {
                         return Task.FromResult(new PPPBeatMapInfo(beatMapInfo, new PPPStarRating(cachedInfo.StarRating.Stars)));
@@ -95,6 +97,7 @@ namespace PPPredictor.Core.Calculator
 
         internal override async Task<PPPScoreCollection> GetAllScores(string userId, PPPMapPool mapPool)
         {
+            pendingOverallScores = null;
             if (!IsPlayerFound(mapPool)) return PPPScoreCollection.Failed();
             try
             {
@@ -125,9 +128,7 @@ namespace PPPredictor.Core.Calculator
                         newSums.Add(group.Key, group.Sum(x => x.weightedAp));
                     }
                     var result = new PPPScoreCollection(lsAccSaberScores, 0);
-                    mapPool.LsScores = new List<ShortScore>();
-                    dctScores = newScores;
-                    dctScoresSum = newSums;
+                    pendingOverallScores = (newScores, newSums);
                     return result;
                 }
             }
@@ -135,6 +136,18 @@ namespace PPPredictor.Core.Calculator
             {
                 Logging.ErrorPrint($"PPCalculatorAccSaber GetAllScores Error: {ex.Message}");
                 return PPPScoreCollection.Failed();
+            }
+        }
+
+        protected override bool ReplaceScoresOnFullFetch(PPPMapPool mapPool) => mapPool.MapPoolType == MapPoolType.Default;
+
+        protected override void OnScoresCommitted(PPPMapPool mapPool)
+        {
+            if (mapPool.MapPoolType == MapPoolType.Default && pendingOverallScores.HasValue)
+            {
+                dctScores = pendingOverallScores.Value.Scores;
+                dctScoresSum = pendingOverallScores.Value.Sums;
+                pendingOverallScores = null;
             }
         }
 
@@ -191,6 +204,11 @@ namespace PPPredictor.Core.Calculator
         }
 
         internal override PPGainResult GetPlayerScorePPGain(string mapSearchString, double pp, PPPMapPool mapPool)
+        {
+            lock (mapPool.DataLock) return GetAccSaberScorePPGain(mapSearchString, pp, mapPool);
+        }
+
+        private PPGainResult GetAccSaberScorePPGain(string mapSearchString, double pp, PPPMapPool mapPool)
         {
             if(mapPool.MapPoolType != MapPoolType.Default)
             {
@@ -307,7 +325,7 @@ namespace PPPredictor.Core.Calculator
             LoadAccSaberMapCache();
             string searchString = CreateSeachString(beatMapInfo.CustomLevelHash, beatMapInfo.BeatmapKey);
             ShortScore leaderboardInfo = _dctMapPool.Values
-                .SelectMany(x => x.LsLeaderboadInfo ?? new List<ShortScore>())
+                .SelectMany(x => { lock (x.DataLock) return (x.LsLeaderboadInfo ?? new List<ShortScore>()).ToArray(); })
                 .FirstOrDefault(x => x.Searchstring == searchString);
             if (leaderboardInfo == null)
             {
@@ -387,7 +405,7 @@ namespace PPPredictor.Core.Calculator
                     {
                         continue;
                     }
-                    mapPool.LsLeaderboadInfo.Clear();
+                    lock (mapPool.DataLock) mapPool.LsLeaderboadInfo.Clear();
                 }
 
                 foreach (AccSaberCachedMap map in mapCache.content)
@@ -428,12 +446,15 @@ namespace PPPredictor.Core.Calculator
         private void AddLeaderboardInfo(PPPMapPool mapPool, string songHash, string difficulty, double complexity, string category)
         {
             string searchString = CreateSeachString(songHash, "SoloStandard", ParseAccSaberDifficulty(difficulty));
-            if (mapPool.LsLeaderboadInfo.Any(x => x.Searchstring == searchString))
+            lock (mapPool.DataLock)
             {
-                return;
-            }
+                if (mapPool.LsLeaderboadInfo.Any(x => x.Searchstring == searchString))
+                {
+                    return;
+                }
 
-            mapPool.LsLeaderboadInfo.Add(new ShortScore(searchString, new PPPStarRating(complexity), DateTime.Now, category));
+                mapPool.LsLeaderboadInfo.Add(new ShortScore(searchString, new PPPStarRating(complexity), DateTime.Now, category));
+            }
         }
 
         private async Task LoadAccSaberMapByHash(string hash)
