@@ -39,6 +39,14 @@
             Custom
         }
 
+        public enum PPCalculationBlockReason
+        {
+            None,
+            RequiresSmallCubesAndProMode,
+            ModifiersNotAllowed,
+            NegativeModifiersNotAllowed
+        }
+
         public enum CurveType
         {
             ScoreSaber,

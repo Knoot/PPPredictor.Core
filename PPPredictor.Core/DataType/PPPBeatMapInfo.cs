@@ -14,6 +14,7 @@
         internal PPPStarRating ModifiedStarRating { get => _modifiedStarRating; set => _modifiedStarRating = value; }
         public BeatSaberEncapsulation.BeatmapKey BeatmapKey { get => _beatmapkey; set => _beatmapkey = value; }
         public double MaxPP { get => _maxPP; set => _maxPP = value; }
+        public Enums.PPCalculationBlockReason CalculationBlockReason { get; internal set; }
         public string SelectedMapSearchString { get => _selectedMapSearchString; set => _selectedMapSearchString = value; }
         public bool OldDotsEnabled { get => _oldDotsEnabled; set => _oldDotsEnabled = value; }
         public string CustomLevelHash { get => _customLevelHash; set => _customLevelHash = value; }

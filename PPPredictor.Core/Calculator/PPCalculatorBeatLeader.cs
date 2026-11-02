@@ -203,7 +203,10 @@ namespace PPPredictor.Core.Calculator
                     }
                 }
             }
-            beatMapInfo.ModifiedStarRating = new PPPStarRating(GenerateModifierMultiplier(lsModifiers, beatMapInfo, mapPool, levelFailed, levelPaused, beatMapInfo.BaseStarRating.ModifiersRating != null), accRating, passRating, techRating, beatMapInfo.BaseStarRating.RankedBeatLeader)
+            double multiplier = GenerateModifierMultiplier(lsModifiers, beatMapInfo, mapPool, levelFailed, levelPaused,
+                beatMapInfo.BaseStarRating.ModifiersRating != null, out var blockReason);
+            beatMapInfo.CalculationBlockReason = blockReason;
+            beatMapInfo.ModifiedStarRating = new PPPStarRating(multiplier, accRating, passRating, techRating, beatMapInfo.BaseStarRating.RankedBeatLeader)
             {
                 PredictedAcc = predictedAcc,
                 SliderPercentage = sliderPercentage,
@@ -242,20 +245,33 @@ namespace PPPredictor.Core.Calculator
             }
         }
 
-        private double GenerateModifierMultiplier(List<string> lsModifier, PPPBeatMapInfo beatMapInfo, PPPMapPool mapPool, bool levelFailed, bool levelPaused, bool ignoreSpeedMultiplier)
+        private double GenerateModifierMultiplier(List<string> lsModifier, PPPBeatMapInfo beatMapInfo, PPPMapPool mapPool, bool levelFailed, bool levelPaused, bool ignoreSpeedMultiplier, out PPCalculationBlockReason blockReason)
         {
+            blockReason = PPCalculationBlockReason.None;
             try
             {
                 double multiplier = 1;
-                if (mapPool.LeaderboardContext == LeaderboardContext.BeatLeaderSCPM && !(lsModifier.Contains("SC") && lsModifier.Contains("PM"))) return 0;
+                if (mapPool.LeaderboardContext == LeaderboardContext.BeatLeaderSCPM && !(lsModifier.Contains("SC") && lsModifier.Contains("PM")))
+                {
+                    blockReason = PPCalculationBlockReason.RequiresSmallCubesAndProMode;
+                    return 0;
+                }
                 foreach (string modifier in lsModifier)
                 {
-                    if (mapPool.LeaderboardContext == LeaderboardContext.BeatLeaderNoModifiers && !(modifier == "BE" || modifier == "IF")) return 0;
+                    if (mapPool.LeaderboardContext == LeaderboardContext.BeatLeaderNoModifiers && !(modifier == "BE" || modifier == "IF"))
+                    {
+                        blockReason = PPCalculationBlockReason.ModifiersNotAllowed;
+                        return 0;
+                    }
                     if (!levelFailed && modifier == "NF") continue; //Ignore nofail until the map is failed in gameplay
                     if (ignoreSpeedMultiplier && (modifier == "SF" || modifier == "SS" || modifier == "FS")) continue; //Ignore speed multies and use the precomputed values from backend
                     if(beatMapInfo.BaseStarRating.ModifierValues.TryGetValue(modifier.ToLower(), out double value))
                     {
-                        if (mapPool.LeaderboardContext == LeaderboardContext.BeatLeaderGolf && value < 0) return 0;
+                        if (mapPool.LeaderboardContext == LeaderboardContext.BeatLeaderGolf && value < 0)
+                        {
+                            blockReason = PPCalculationBlockReason.NegativeModifiersNotAllowed;
+                            return 0;
+                        }
                         multiplier += value;
                     }
                 }
