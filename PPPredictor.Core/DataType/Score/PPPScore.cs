@@ -22,6 +22,7 @@ namespace PPPredictor.Core.DataType.Score
         public string SongHash { get => songHash; }
         public double Difficulty1 { get => difficulty; }
         public string GameMode { get => gameMode; }
+        public long? ScoreValue { get; private set; }
 
         public PPPScore(ScoreSaberPlayerScore playerScore)
         {
@@ -62,6 +63,7 @@ namespace PPPredictor.Core.DataType.Score
 
         public PPPScore(AccSaberScores playerScore)
         {
+            ScoreValue = playerScore.scoreNoMods;
             timeSet = playerScore.timeSet;
             pp = playerScore.ap;
             songHash = playerScore.songHash?.ToUpper();

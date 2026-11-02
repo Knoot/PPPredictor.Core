@@ -7,5 +7,6 @@
         public int context;
         public string hash;
         public double? pp;
+        public long? score;
     }
 }

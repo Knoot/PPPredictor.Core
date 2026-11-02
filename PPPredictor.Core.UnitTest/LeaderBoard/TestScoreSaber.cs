@@ -5,6 +5,8 @@ using PPPredictor.Core.DataType.BeatSaberEncapsulation;
 using PPPredictor.Core.DataType.Curve;
 using PPPredictor.Core.DataType.MapPool;
 using PPPredictor.Core.UnitTest.MockService;
+using PPPredictor.Core.Interface;
+using PPPredictor.Core.DataType.LeaderBoard;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.Metrics;
@@ -155,7 +157,9 @@ namespace PPPredictor.Core.UnitTest.LeaderBoard
             lsBeatMapInfos.Add(new PPPBeatMapInfo(new PPPBeatMapInfo("HASH", new BeatmapKey()), new PPPStarRating(10)));
 
             PPGainResult gain = ci.GetPlayerScorePPGain(Enums.Leaderboard.ScoreSaber, "-1", "HASH01", 100);
-            Assert.AreEqual(gain.PpGainWeighted, 100);
+            Assert.IsFalse(ci.HasScoreDataForPPGain(Leaderboard.ScoreSaber, "-1"));
+            Assert.AreEqual(0d, gain.PpGainWeighted, "An unloaded profile must not be treated as an empty profile.");
+            Assert.AreEqual(0d, gain.PpGainRaw);
 
             ci = await CalculatorInstance.CreateAsyncMock<MockScoreSaberApi, MockBeatLeader, MockHitBloq, MockAccSaber>(
                 new Settings(true, false, false, false, "123", DataType.Enums.PPGainCalculationType.Raw, DataType.Enums.MapPoolSorting.Alphabetical, "", 7, DateTime.Now, 12),
@@ -204,9 +208,54 @@ namespace PPPredictor.Core.UnitTest.LeaderBoard
                     return lsBeatMapInfos.FirstOrDefault(y => y.CustomLevelHash == x.CustomLevelHash);
                 }
                 );
-            //Error
+            // Invalid cached data must preserve the known total without fabricating a gain.
             gain = ci.GetPlayerScorePPGain(Enums.Leaderboard.ScoreSaber, "-1", "HASH_0", 200);
-            Assert.AreEqual(gain.PpGainRaw, 200);
+            Assert.AreEqual(9000d, gain.PpTotal);
+            Assert.AreEqual(0d, gain.PpGainWeighted);
+            Assert.AreEqual(0d, gain.PpGainRaw);
+        }
+
+        private sealed class EmptyScoreSaberApi : IScoresaberAPI
+        {
+            public Task<ScoreSaberDataTypes.ScoreSaberPlayer> GetPlayer(long playerId)
+                => Task.FromResult(new ScoreSaberDataTypes.ScoreSaberPlayer { pp = 0 });
+
+            public Task<ScoreSaberDataTypes.ScoreSaberPlayerList> GetPlayers(double? page)
+                => Task.FromResult(new ScoreSaberDataTypes.ScoreSaberPlayerList());
+
+            public Task<ScoreSaberDataTypes.ScoreSaberPlayerScoreList> GetPlayerScores(string playerId, int? limit, int? page)
+                => Task.FromResult(new ScoreSaberDataTypes.ScoreSaberPlayerScoreList
+                {
+                    metadata = new ScoreSaberDataTypes.ScoreSaberScoreListMetadata
+                    {
+                        page = page.GetValueOrDefault(1), itemsPerPage = limit.GetValueOrDefault(10), total = 0
+                    },
+                    playerScores = new List<ScoreSaberDataTypes.ScoreSaberPlayerScore>()
+                });
+        }
+
+        [TestMethod]
+        public async Task FirstScoreHasFullWeightOnlyAfterSuccessfulEmptyProfileLoad()
+        {
+            var ci = await CalculatorInstance.CreateAsyncMock<EmptyScoreSaberApi, MockBeatLeader, MockHitBloq, MockAccSaber>(
+                new Settings(true, false, false, false, "123", PPGainCalculationType.Raw, MapPoolSorting.Alphabetical,
+                    "", -7, DateTime.Now.AddHours(-1), 12),
+                new Dictionary<string, LeaderboardData>(), _ => new PPPBeatMapInfo());
+
+            Assert.IsFalse(ci.HasScoreDataForPPGain(Leaderboard.ScoreSaber, "-1"));
+            Assert.AreEqual(0d, ci.GetPlayerScorePPGain(Leaderboard.ScoreSaber, "-1", "HASH01", 100).PpGainWeighted);
+
+            var (_, player) = await ci.UpdatePlayer(Leaderboard.ScoreSaber, "-1", false);
+            Assert.IsFalse(player.IsErrorUser);
+            Assert.AreEqual(0d, player.Pp);
+            Assert.IsTrue(await ci.GetPlayerScores(Leaderboard.ScoreSaber, "-1", 10, 100));
+            Assert.IsTrue(ci.HasScoreDataForPPGain(Leaderboard.ScoreSaber, "-1"));
+            Assert.IsFalse(ci.HasDataRefreshFailed(Leaderboard.ScoreSaber, "-1"));
+
+            var gain = ci.GetPlayerScorePPGain(Leaderboard.ScoreSaber, "-1", "HASH01", 100);
+            Assert.AreEqual(100d, gain.PpGainWeighted);
+            Assert.AreEqual(100d, gain.PpGainRaw);
+            Assert.AreEqual(100d, gain.PpTotal);
         }
 
         [TestMethod]

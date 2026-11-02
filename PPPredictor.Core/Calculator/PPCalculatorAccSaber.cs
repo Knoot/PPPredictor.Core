@@ -18,15 +18,19 @@ namespace PPPredictor.Core.Calculator
     {
         private readonly ASAPI accsaberapi;
         private readonly string unsetPoolId = "-1";
-        private Dictionary<string, List<ShortScore>> dctScores = new Dictionary<string, List<ShortScore>>();
-        private Dictionary<string, double> dctScoresSum = new Dictionary<string, double>();
-        private (Dictionary<string, List<ShortScore>> Scores, Dictionary<string, double> Sums)? pendingOverallScores;
+        private Dictionary<string, PPPMapPool> categoryScores = new Dictionary<string, PPPMapPool>();
+        private Dictionary<string, PPPMapPool> pendingOverallScores;
+        private bool overallScoresLoaded;
         private bool accSaberMapCacheLoaded;
         private readonly HashSet<string> accSaberMapLookupMisses = new HashSet<string>();
 
-        public PPCalculatorAccSaber(Dictionary<string, PPPMapPool> dctMapPool, Settings settings) : base(dctMapPool, settings, Leaderboard.AccSaber)
+        public PPCalculatorAccSaber(Dictionary<string, PPPMapPool> dctMapPool, Settings settings) : this(dctMapPool, settings, new ASAPI())
         {
-            accsaberapi = new ASAPI();
+        }
+
+        internal PPCalculatorAccSaber(Dictionary<string, PPPMapPool> dctMapPool, Settings settings, ASAPI api) : base(dctMapPool, settings, Leaderboard.AccSaber)
+        {
+            accsaberapi = api;
         }
         internal override Task<PPPBeatMapInfo> GetBeatMapInfoAsync(PPPBeatMapInfo beatMapInfo, PPPMapPool mapPool)
         {
@@ -112,23 +116,31 @@ namespace PPPredictor.Core.Calculator
                 {
                     //Special case for overall leaderboard need the scores seperated
                     List<AccSaberScores> lsAccSaberScores = await accsaberapi.GetAllScores(userId);
-                    var newScores = new Dictionary<string, List<ShortScore>>();
-                    var newSums = new Dictionary<string, double>();
-                    foreach (var group in lsAccSaberScores.GroupBy(x => x.categoryDisplayName))
+                    if (lsAccSaberScores.Any(x => double.IsNaN(x.ap) || double.IsInfinity(x.ap) || x.ap < 0))
+                        throw new InvalidOperationException("AccSaber returned an invalid AP value.");
+                    var newScores = new[] { "standard", "tech", "true" }.ToDictionary(x => x,
+                        x => new PPPMapPool(x, MapPoolType.Custom, x, 0, 0, CurveParser.ParseToCurve(new CurveInfo(CurveType.AccSaber))));
+                    foreach (var group in lsAccSaberScores.Where(x => x.ap > 0).GroupBy(x => NormalizeCategoryToPoolId(x.categoryDisplayName)))
                     {
-                        //I hate to parse it twice...
-                        List<ShortScore> lsShortScore = new List<ShortScore>();
-                        foreach (var score in group.OrderByDescending(x => x.weightedAp))
+                        if (!newScores.TryGetValue(group.Key, out var category))
+                            throw new InvalidOperationException("AccSaber score has an unknown category.");
+                        foreach (var score in group)
                         {
                             PPPScore pppScore = new PPPScore(score);
                             string searchString = CreateSeachString(pppScore.SongHash, pppScore.GameMode, (int)pppScore.Difficulty1);
-                            lsShortScore.Add(new ShortScore(searchString, pppScore.Pp));
+                            if (pppScore.Pp > 0) category.LsScores.Add(new ShortScore(searchString, pppScore.Pp));
                         }
-                        newScores.Add(group.Key, lsShortScore);
-                        newSums.Add(group.Key, group.Sum(x => x.weightedAp));
+                    }
+                    foreach (var category in newScores.Values)
+                    {
+                        category.LsScores = category.LsScores.GroupBy(x => x.Searchstring)
+                            .Select(x => new ShortScore(x.Key, x.Max(score => score.Pp))).ToList();
+                        RecalculateScoreWeightedSum(category);
+                        category.CurrentPlayer = new PPPPlayer { Pp = category.LsScores.LastOrDefault()?.WeightedSum ?? 0 };
+                        category.HasScoreDataFetched = true;
                     }
                     var result = new PPPScoreCollection(lsAccSaberScores, 0);
-                    pendingOverallScores = (newScores, newSums);
+                    pendingOverallScores = newScores;
                     return result;
                 }
             }
@@ -139,14 +151,14 @@ namespace PPPredictor.Core.Calculator
             }
         }
 
-        protected override bool ReplaceScoresOnFullFetch(PPPMapPool mapPool) => mapPool.MapPoolType == MapPoolType.Default;
+        protected override bool ReplaceScoresOnFullFetch(PPPMapPool mapPool) => mapPool.Id != unsetPoolId;
 
         protected override void OnScoresCommitted(PPPMapPool mapPool)
         {
-            if (mapPool.MapPoolType == MapPoolType.Default && pendingOverallScores.HasValue)
+            if (mapPool.MapPoolType == MapPoolType.Default && pendingOverallScores != null)
             {
-                dctScores = pendingOverallScores.Value.Scores;
-                dctScoresSum = pendingOverallScores.Value.Sums;
+                categoryScores = pendingOverallScores;
+                overallScoresLoaded = true;
                 pendingOverallScores = null;
             }
         }
@@ -191,7 +203,8 @@ namespace PPPredictor.Core.Calculator
 
         internal override bool IsScoreSetOnCurrentMapPool(PPPMapPool mapPool, PPPScoreSetData score)
         {
-            return mapPool.LsLeaderboadInfo.Exists(x => x.Searchstring.Contains(score.hash.ToUpper()));
+            return mapPool.Id != unsetPoolId && mapPool.LsLeaderboadInfo.Exists(x =>
+                string.Equals(x.Searchstring, score.hash, StringComparison.OrdinalIgnoreCase));
         }
 
         protected override double CalculateWeightMulitplier(int index, float accumulationConstant)
@@ -224,15 +237,15 @@ namespace PPPredictor.Core.Calculator
                 var rankedMapInfo = mapPool.LsLeaderboadInfo.FirstOrDefault(x => x.Searchstring == mapSearchString);
                 if (rankedMapInfo != null)
                 {
-                    string category = dctScores.Keys.FirstOrDefault(x => NormalizeCategoryToPoolId(x) == NormalizeCategoryToPoolId(rankedMapInfo.Category));
-                    if (category == null || !dctScores.TryGetValue(category, out List<ShortScore> categoryScores) || !dctScoresSum.TryGetValue(category, out double categorySum))
+                    string category = NormalizeCategoryToPoolId(rankedMapInfo.Category);
+                    if (!overallScoresLoaded || !categoryScores.TryGetValue(category, out var categoryPool))
                     {
                         return new PPGainResult(mapPool.CurrentPlayer.Pp, 0, 0, _settings.PpGainCalculationType);
                     }
 
-                    PPGainResult ppGain = GetPlayerScorePPGainInternal(categoryScores, mapSearchString, pp, categorySum, mapPool);
-                    double otherSum = dctScoresSum.Where(kvp => kvp.Key != category).Sum(kvp => kvp.Value);
-                    return new PPGainResult(ppGain.PpTotal + otherSum, ppGain.PpGainWeighted, ppGain.PpGainRaw, _settings.PpGainCalculationType);
+                    PPGainResult ppGain = GetPlayerScorePPGainInternal(categoryPool.LsScores, mapSearchString, pp, categoryPool.CurrentPlayer.Pp, categoryPool);
+                    return new PPGainResult(Math.Round(mapPool.CurrentPlayer.Pp + ppGain.PpGainWeighted, 2, MidpointRounding.AwayFromZero),
+                        ppGain.PpGainWeighted, ppGain.PpGainRaw, _settings.PpGainCalculationType);
                 }
                 return new PPGainResult(mapPool.CurrentPlayer.Pp, 0, 0, _settings.PpGainCalculationType);
             }
@@ -242,19 +255,18 @@ namespace PPPredictor.Core.Calculator
         {
             if (mapPool?.MapPoolType == MapPoolType.Default)
             {
-                return dctScores.Values.Any(x => x.Count > 0);
+                return mapPool.Id != unsetPoolId && overallScoresLoaded;
             }
 
             return HasCustomPoolScoreDataForPPGain(mapPool);
         }
 
-        private static bool HasCustomPoolScoreDataForPPGain(PPPMapPool mapPool)
+        private bool HasCustomPoolScoreDataForPPGain(PPPMapPool mapPool)
         {
             return mapPool != null
                 && mapPool.CurrentPlayer != null
-                && mapPool.CurrentPlayer.Pp > 0
-                && mapPool.LsScores != null
-                && mapPool.LsScores.Count > 0;
+                && mapPool.Id != unsetPoolId
+                && base.HasScoreDataForPPGain(mapPool);
         }
 
         public override string CreateSeachString(string hash, DataType.BeatSaberEncapsulation.BeatmapKey beatmapKey)

@@ -9,6 +9,7 @@ namespace PPPredictor.Core.DataType.LeaderBoard
         {
             public double ap { get; set; }
             public double weightedAp { get; set; }
+            public long? scoreNoMods { get; set; }
             public string songHash { get; set; }
             public string difficulty { get; set; }
             public DateTime timeSet { get; set; }

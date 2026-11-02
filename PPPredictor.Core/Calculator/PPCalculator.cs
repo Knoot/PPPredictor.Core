@@ -188,7 +188,8 @@ namespace PPPredictor.Core.Calculator
                         string searchString = CreateSeachString(scores.SongHash, scores.GameMode, (int)scores.Difficulty1);
                         cachedScores.TryGetValue(searchString, out ShortScore previousScore);
                         if (expectedScore != null && string.Equals(searchString, expectedScore.hash, StringComparison.OrdinalIgnoreCase)
-                            && (!expectedScore.pp.HasValue || scores.Pp >= expectedScore.pp.Value - 0.001))
+                            && (!expectedScore.pp.HasValue || scores.Pp >= expectedScore.pp.Value - 0.001)
+                            && (!expectedScore.score.HasValue || scores.ScoreValue >= expectedScore.score.Value))
                             expectedScoreFound = true;
                         ShortScore newScore = new ShortScore(searchString, scores.Pp);
                         if (newScore.Pp > 0) // Do not cache unranked scores
