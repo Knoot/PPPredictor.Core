@@ -24,6 +24,34 @@ namespace UnitTests.Data
 
         private static HttpResponseMessage Json(string json) => new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json) };
 
+        [TestMethod]
+        public async Task ConfirmedMissingMapIsNotAServerFailure()
+        {
+            var handler = new Handler { Respond = _ => new HttpResponseMessage(HttpStatusCode.NotFound) };
+            using var client = new HttpClient(handler) { BaseAddress = new Uri("https://example.test/") };
+            Assert.IsNull(await NetworkUtil.GetDataAsync<List<int>>(client, Leaderboard.ScoreSaber, "test", "map", allowNotFound: true));
+            handler.Respond = _ => new HttpResponseMessage(HttpStatusCode.Unauthorized);
+            await Assert.ThrowsExceptionAsync<HttpRequestException>(() => NetworkUtil.GetDataAsync<List<int>>(
+                client, Leaderboard.ScoreSaber, "test", "map", allowNotFound: true));
+        }
+
+        [TestMethod]
+        public async Task AccSaberEmptyCategoriesRecoverWithoutRestart()
+        {
+            var now = DateTime.UtcNow;
+            int calls = 0;
+            var handler = new Handler { Respond = _ => { calls++; return Json("[]"); } };
+            using var client = new HttpClient(handler);
+            var api = new AccSaberApi(client, () => now);
+            await Assert.ThrowsExceptionAsync<InvalidOperationException>(() => api.GetAccSaberMapPools());
+            handler.Respond = _ => { calls++; return Json("[{\"id\":\"tech-id\",\"code\":\"TECH\",\"name\":\"Tech\"}]"); };
+            await Assert.ThrowsExceptionAsync<InvalidOperationException>(() => api.GetAccSaberMapPools());
+            Assert.AreEqual(1, calls);
+            now = now.AddSeconds(15);
+            Assert.AreEqual("tech", (await api.GetAccSaberMapPools()).Single().categoryName);
+            Assert.AreEqual(2, calls);
+        }
+
         [DataTestMethod]
         [DataRow(401, 1)]
         [DataRow(404, 1)]
@@ -196,6 +224,38 @@ namespace UnitTests.Data
             Assert.IsTrue(pool.HasScoreDataFetched);
             Assert.IsFalse(pool.ScoreRefreshFailed);
             Assert.AreEqual(0, pool.LsScores.Count);
+        }
+
+        [TestMethod]
+        public async Task ForcedFullRefreshAcceptsDecreasedAndDeletedScoresDespiteOldTimestamps()
+        {
+            var pool = new PPPMapPool { HasScoreDataFetched = true, ScoresRequireRefresh = true,
+                DtLastScoreSet = DateTimeOffset.UtcNow.AddDays(1) };
+            pool.LsScores.Add(new ShortScore("OLD_SOLOSTANDARD_9", 200));
+            pool.LsScores.Add(new ShortScore("DELETED_SOLOSTANDARD_9", 300));
+            var calculator = new Calculator(pool, Settings());
+            int pages = 0;
+            calculator.Fetch = page => { pages++; return Page(page, 2, page == 1 ? "OLD" : "NEW"); };
+            Assert.IsTrue(await calculator.GetPlayerScores(pool, 1, 1, fetchOnePage: true, forceFullRefresh: true));
+            Assert.AreEqual(2, pages);
+            Assert.AreEqual(2, pool.LsScores.Count);
+            Assert.AreEqual(100, pool.LsScores.Single(x => x.Searchstring == "OLD_SOLOSTANDARD_9").Pp);
+            Assert.IsFalse(pool.LsScores.Any(x => x.Searchstring == "DELETED_SOLOSTANDARD_9"));
+            Assert.IsFalse(pool.ScoresRequireRefresh);
+        }
+
+        [TestMethod]
+        public async Task FailedFullRefreshRetainsScoresAndInvalidationAcrossSave()
+        {
+            var pool = new PPPMapPool { ScoresRequireRefresh = true };
+            pool.CurveInfo = new PPPredictor.Core.DataType.Curve.CurveInfo(CurveType.ScoreSaber);
+            pool.LsScores.Add(new ShortScore("OLD_SOLOSTANDARD_9", 200));
+            var calculator = new Calculator(pool, Settings()) { Fetch = _ => PPPScoreCollection.Failed() };
+            Assert.IsFalse(await calculator.GetPlayerScores(pool, 1, 1, forceFullRefresh: true));
+            Assert.AreEqual(200, pool.LsScores.Single().Pp);
+            Assert.IsTrue(pool.ScoresRequireRefresh);
+            var saved = Newtonsoft.Json.JsonConvert.SerializeObject(pool);
+            Assert.IsTrue(Newtonsoft.Json.JsonConvert.DeserializeObject<PPPMapPool>(saved)!.ScoresRequireRefresh);
         }
 
         [DataTestMethod]

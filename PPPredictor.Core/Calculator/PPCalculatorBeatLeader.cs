@@ -15,6 +15,8 @@ namespace PPPredictor.Core.Calculator
     class PPCalculatorBeatLeader<BLAPI> : PPCalculator where BLAPI : IBeatLeaderAPI, new ()
     {
         private readonly BLAPI beatleaderapi;
+        private readonly TimedAsyncCache<BeatLeaderSong> songCache;
+        private readonly Func<DateTime> utcNow;
         internal static float accumulationConstant = 0.965f;
         private const float accumulationConstantEvent = 0.925f;
         private const string AccRating = "AccRating";
@@ -22,9 +24,15 @@ namespace PPPredictor.Core.Calculator
         private const string TechRating = "TechRating";
         private string _userName = string.Empty;
 
-        public PPCalculatorBeatLeader(Dictionary<string, PPPMapPool> dctMapPool, Settings settings) : base(dctMapPool, settings, Leaderboard.BeatLeader) 
+        public PPCalculatorBeatLeader(Dictionary<string, PPPMapPool> dctMapPool, Settings settings) : this(dctMapPool, settings, new BLAPI())
         {
-            beatleaderapi = new BLAPI();
+        }
+
+        internal PPCalculatorBeatLeader(Dictionary<string, PPPMapPool> dctMapPool, Settings settings, BLAPI api, Func<DateTime> utcNow = null) : base(dctMapPool, settings, Leaderboard.BeatLeader)
+        {
+            beatleaderapi = api;
+            this.utcNow = utcNow ?? (() => DateTime.UtcNow);
+            songCache = new TimedAsyncCache<BeatLeaderSong>(settings?.MapInfoCacheDuration ?? TimeSpan.FromMinutes(5), this.utcNow);
             foreach (var pool in _dctMapPool.Values.Where(x => x.BeatLeaderPPVersion < 4))
             {
                 pool.LsScores.Clear();
@@ -122,6 +130,7 @@ namespace PPPredictor.Core.Calculator
 
         internal override async Task<PPPBeatMapInfo> GetBeatMapInfoAsync(PPPBeatMapInfo beatMapInfo, PPPMapPool mapPool)
         {
+            ShortScore cachedInfo = null;
             try
             {
                 if (!string.IsNullOrEmpty(beatMapInfo.CustomLevelHash))
@@ -131,46 +140,42 @@ namespace PPPredictor.Core.Calculator
                     {
                         return new PPPBeatMapInfo(beatMapInfo, new PPPStarRating(0)); //Currently selected map is not contained in selected MapPool
                     }
-                    ShortScore cachedInfo = mapPool.LsLeaderboadInfo?.FirstOrDefault(x => x.Searchstring == searchString);
-                    bool refetchInfo = cachedInfo != null && cachedInfo.FetchTime < DateTime.Now.AddDays(_settings.RefetchMapInfoAfterDays);
-                    if (cachedInfo == null || refetchInfo)
-                    {
-                        if (refetchInfo) mapPool.LsLeaderboadInfo?.Remove(cachedInfo);
-                        BeatLeaderSong song = await beatleaderapi.GetSongByHash(beatMapInfo.CustomLevelHash);
-                        if (song != null)
-                        {
-                            BeatLeaderDifficulty diff = song.difficulties.FirstOrDefault(x => x.value == ParsingUtil.ParseDifficultyNameToInt(beatMapInfo.BeatmapKey.difficulty.ToString()) && x.modeName.ToUpper() == beatMapInfo.BeatmapKey.serializedName.ToUpper());
-                            if (diff != null)
-                            {
-                                mapPool.LsLeaderboadInfo.Add(new ShortScore(searchString, new PPPStarRating(diff), DateTime.Now));
-                                if(mapPool.MapPoolType == MapPoolType.Custom)
-                                {
-                                    if (diff.stars.HasValue)
-                                    {
-                                        return new PPPBeatMapInfo(beatMapInfo, new PPPStarRating(diff, true));
-                                    }
-                                }
-                                else
-                                {
-                                    if (diff.stars.HasValue && diff.status == (int)BeatLeaderDifficultyStatus.ranked)
-                                    {
-                                        return new PPPBeatMapInfo(beatMapInfo, new PPPStarRating(diff));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    else
-                    {
+                    lock (mapPool.DataLock) cachedInfo = mapPool.LsLeaderboadInfo?.FirstOrDefault(x => x.Searchstring == searchString);
+                    TimeSpan ttl = cachedInfo?.StarRating.IsRanked() == true ? _settings.MapInfoCacheDuration : TimeSpan.FromMinutes(1);
+                    TimeSpan age = cachedInfo == null ? TimeSpan.MaxValue : utcNow() - cachedInfo.FetchTime.ToUniversalTime();
+                    if (cachedInfo != null && age >= TimeSpan.Zero && age < ttl)
                         return new PPPBeatMapInfo(beatMapInfo, cachedInfo.StarRating);
+
+                    var response = await songCache.Get(beatMapInfo.CustomLevelHash, async () =>
+                    {
+                        var song = await beatleaderapi.GetSongByHash(beatMapInfo.CustomLevelHash);
+                        if (song != null && (song.difficulties == null || song.difficulties.Count == 0))
+                            throw new InvalidOperationException("BeatLeader returned an invalid map response.");
+                        return song;
+                    });
+                    if (response.Error != null)
+                    {
+                        Logging.ErrorPrint($"BeatLeader map refresh failed; keeping cached rating: {response.Error.Message}");
+                        return new PPPBeatMapInfo(beatMapInfo, cachedInfo?.StarRating ?? new PPPStarRating(-1)) { MapInfoRefreshFailed = true };
                     }
+                    BeatLeaderDifficulty diff = response.Value?.difficulties.FirstOrDefault(x =>
+                        x.value == (int)beatMapInfo.BeatmapKey.difficulty && string.Equals(x.modeName, beatMapInfo.BeatmapKey.serializedName, StringComparison.OrdinalIgnoreCase));
+                    var rating = diff == null ? new PPPStarRating(0)
+                        : new PPPStarRating(diff, mapPool.MapPoolType == MapPoolType.Custom ? (bool?)diff.stars.HasValue : null);
+                    MarkRatingChange(searchString, cachedInfo?.StarRating, rating);
+                    lock (mapPool.DataLock)
+                    {
+                        mapPool.LsLeaderboadInfo.RemoveAll(x => x.Searchstring == searchString);
+                        mapPool.LsLeaderboadInfo.Add(new ShortScore(searchString, rating, response.FetchedAtUtc.ToLocalTime()));
+                    }
+                    return new PPPBeatMapInfo(beatMapInfo, rating);
                 }
-                return beatMapInfo;
+                return new PPPBeatMapInfo(beatMapInfo, new PPPStarRating(0));
             }
             catch (Exception ex)
             {
                 Logging.ErrorPrint($"PPCalculatorBeatLeader GetStarsForBeatmapAsync Error: {ex.Message}");
-                return new PPPBeatMapInfo(beatMapInfo, new PPPStarRating(-1));
+                return new PPPBeatMapInfo(beatMapInfo, cachedInfo?.StarRating ?? new PPPStarRating(-1)) { MapInfoRefreshFailed = true };
             }
         }
 

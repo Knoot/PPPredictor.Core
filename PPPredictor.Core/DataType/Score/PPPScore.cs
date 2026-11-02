@@ -68,7 +68,8 @@ namespace PPPredictor.Core.DataType.Score
             pp = playerScore.ap;
             songHash = playerScore.songHash?.ToUpper();
             difficulty = ParsingUtil.ParseDifficultyNameToInt(playerScore.difficulty);
-            gameMode = "SoloStandard";
+            string mode = playerScore.characteristic ?? "Standard";
+            gameMode = mode.StartsWith("Solo", StringComparison.OrdinalIgnoreCase) ? mode : "Solo" + mode;
         }
     }
 }

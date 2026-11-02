@@ -18,11 +18,19 @@ namespace PPPredictor.Core.Calculator
         internal static readonly float accumulationConstant = 0.965f;
         private Func<PPPBeatMapInfo, PPPBeatMapInfo> scoreSaberLookUpFunction;
         private readonly SSAPI scoresaberAPI;
+        private readonly TimedAsyncCache<ScoreSaberLeaderboardInfo> mapCache;
 
-        public PPCalculatorScoreSaber(Dictionary<string, PPPMapPool> dctMapPool, Settings settings, Func<PPPBeatMapInfo, PPPBeatMapInfo> scoreSaberLookUpFunction) : base(dctMapPool, settings, Leaderboard.ScoreSaber)
+        public PPCalculatorScoreSaber(Dictionary<string, PPPMapPool> dctMapPool, Settings settings, Func<PPPBeatMapInfo, PPPBeatMapInfo> scoreSaberLookUpFunction)
+            : this(dctMapPool, settings, scoreSaberLookUpFunction, new SSAPI())
+        {
+        }
+
+        internal PPCalculatorScoreSaber(Dictionary<string, PPPMapPool> dctMapPool, Settings settings,
+            Func<PPPBeatMapInfo, PPPBeatMapInfo> scoreSaberLookUpFunction, SSAPI api, Func<DateTime> utcNow = null) : base(dctMapPool, settings, Leaderboard.ScoreSaber)
         {
             this.scoreSaberLookUpFunction = scoreSaberLookUpFunction;
-            scoresaberAPI = new SSAPI();
+            scoresaberAPI = api;
+            mapCache = new TimedAsyncCache<ScoreSaberLeaderboardInfo>(settings?.MapInfoCacheDuration ?? TimeSpan.FromMinutes(5), utcNow);
         }
 
         internal override async Task<PPPPlayer> GetPlayerInfo(long userId, PPPMapPool mapPool)
@@ -78,20 +86,48 @@ namespace PPPredictor.Core.Calculator
             }
         }
 
-        internal override Task<PPPBeatMapInfo> GetBeatMapInfoAsync(PPPBeatMapInfo beatMapInfo, PPPMapPool mapPool)
+        internal override async Task<PPPBeatMapInfo> GetBeatMapInfoAsync(PPPBeatMapInfo beatMapInfo, PPPMapPool mapPool)
         {
             try
             {
                 if (!string.IsNullOrEmpty(beatMapInfo.CustomLevelHash))
                 {
-                    return Task.FromResult(scoreSaberLookUpFunction(beatMapInfo));
+                    string mode = "Solo" + beatMapInfo.BeatmapKey.serializedName;
+                    string key = CreateSeachString(beatMapInfo.CustomLevelHash, mode, (int)beatMapInfo.BeatmapKey.difficulty);
+                    var response = await mapCache.Get(key, async () =>
+                    {
+                        var info = await scoresaberAPI.GetLeaderboardInfo(beatMapInfo.CustomLevelHash, (int)beatMapInfo.BeatmapKey.difficulty, mode);
+                        if (info != null && (!string.Equals(info.songHash, beatMapInfo.CustomLevelHash, StringComparison.OrdinalIgnoreCase)
+                            || info.difficulty == null || info.difficulty.difficulty != (int)beatMapInfo.BeatmapKey.difficulty
+                            || !string.Equals(info.difficulty.gameMode, mode, StringComparison.OrdinalIgnoreCase)
+                            || (info.ranked && !(info.stars > 0))))
+                            throw new InvalidOperationException("ScoreSaber returned an invalid leaderboard response.");
+                        return info;
+                    });
+                    ShortScore previous;
+                    lock (mapPool.DataLock) previous = mapPool.LsLeaderboadInfo.FirstOrDefault(x => x.Searchstring == key);
+                    if (response.Error != null)
+                    {
+                        var fallback = previous?.StarRating;
+                        if (fallback == null && string.Equals(beatMapInfo.BeatmapKey.serializedName, "Standard", StringComparison.OrdinalIgnoreCase))
+                            fallback = scoreSaberLookUpFunction(beatMapInfo)?.BaseStarRating;
+                        return new PPPBeatMapInfo(beatMapInfo, fallback ?? new PPPStarRating(-1)) { MapInfoRefreshFailed = true };
+                    }
+                    var rating = new PPPStarRating(response.Value?.ranked == true ? response.Value.stars : 0);
+                    MarkRatingChange(key, previous?.StarRating, rating);
+                    lock (mapPool.DataLock)
+                    {
+                        mapPool.LsLeaderboadInfo.RemoveAll(x => x.Searchstring == key);
+                        mapPool.LsLeaderboadInfo.Add(new ShortScore(key, rating, response.FetchedAtUtc.ToLocalTime()));
+                    }
+                    return new PPPBeatMapInfo(beatMapInfo, rating);
                 }
-                return Task.FromResult(new PPPBeatMapInfo(beatMapInfo, new PPPStarRating(0)));
+                return new PPPBeatMapInfo(beatMapInfo, new PPPStarRating(0));
             }
             catch (Exception ex)
             {
                 Logging.ErrorPrint($"PPCalculatorScoreSaber GetStarsForBeatmapAsync Error: {ex.Message}");
-                return Task.FromResult(new PPPBeatMapInfo(beatMapInfo, new PPPStarRating(-1)));
+                return new PPPBeatMapInfo(beatMapInfo, new PPPStarRating(-1)) { MapInfoRefreshFailed = true };
             }
         }
 

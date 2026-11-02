@@ -21,38 +21,47 @@ namespace PPPredictor.Core.Calculator
         private Dictionary<string, PPPMapPool> categoryScores = new Dictionary<string, PPPMapPool>();
         private Dictionary<string, PPPMapPool> pendingOverallScores;
         private bool overallScoresLoaded;
-        private bool accSaberMapCacheLoaded;
-        private readonly HashSet<string> accSaberMapLookupMisses = new HashSet<string>();
+        private readonly TimedAsyncCache<AccSaberMap> mapCache;
+        private readonly Func<DateTime> utcNow;
+        private readonly HashSet<string> failedMapLookups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private (string Path, DateTime Write, long Length)? loadedFile, failedFile;
+        private DateTime fileRetryAfterUtc;
 
         public PPCalculatorAccSaber(Dictionary<string, PPPMapPool> dctMapPool, Settings settings) : this(dctMapPool, settings, new ASAPI())
         {
         }
 
-        internal PPCalculatorAccSaber(Dictionary<string, PPPMapPool> dctMapPool, Settings settings, ASAPI api) : base(dctMapPool, settings, Leaderboard.AccSaber)
+        internal PPCalculatorAccSaber(Dictionary<string, PPPMapPool> dctMapPool, Settings settings, ASAPI api, Func<DateTime> utcNow = null) : base(dctMapPool, settings, Leaderboard.AccSaber)
         {
             accsaberapi = api;
+            this.utcNow = utcNow ?? (() => DateTime.UtcNow);
+            mapCache = new TimedAsyncCache<AccSaberMap>(settings?.MapInfoCacheDuration ?? TimeSpan.FromMinutes(5), this.utcNow);
         }
-        internal override Task<PPPBeatMapInfo> GetBeatMapInfoAsync(PPPBeatMapInfo beatMapInfo, PPPMapPool mapPool)
+        internal override async Task<PPPBeatMapInfo> GetBeatMapInfoAsync(PPPBeatMapInfo beatMapInfo, PPPMapPool mapPool)
         {
             try
             {
                 if (!string.IsNullOrEmpty(beatMapInfo.CustomLevelHash))
                 {
+                    LoadAccSaberMapCache();
+                    if (!HasFreshMapInfo(beatMapInfo)) await LoadAccSaberMapByHash(beatMapInfo.CustomLevelHash);
                     string searchString = CreateSeachString(beatMapInfo.CustomLevelHash, beatMapInfo.BeatmapKey);
                     ShortScore cachedInfo;
                     lock (mapPool.DataLock) cachedInfo = mapPool.LsLeaderboadInfo.FirstOrDefault(x => x.Searchstring == searchString);
                     if(cachedInfo != null)
                     {
-                        return Task.FromResult(new PPPBeatMapInfo(beatMapInfo, new PPPStarRating(cachedInfo.StarRating.Stars)));
+                        return new PPPBeatMapInfo(beatMapInfo, new PPPStarRating(cachedInfo.StarRating.Stars))
+                        { MapInfoRefreshFailed = failedMapLookups.Contains(beatMapInfo.CustomLevelHash) };
                     }
-                    return Task.FromResult(new PPPBeatMapInfo(beatMapInfo, new PPPStarRating(0)));
+                    return new PPPBeatMapInfo(beatMapInfo, new PPPStarRating(0))
+                    { MapInfoRefreshFailed = failedMapLookups.Contains(beatMapInfo.CustomLevelHash) };
                 }
-                return Task.FromResult(beatMapInfo);
+                return new PPPBeatMapInfo(beatMapInfo, new PPPStarRating(0));
             }
             catch (Exception ex)
             {
                 Logging.ErrorPrint($"PPCalculatorAccSaber GetBeatMapInfoAsync Error: {ex.Message}");
-                return Task.FromResult(new PPPBeatMapInfo(beatMapInfo, new PPPStarRating(-1)));
+                return new PPPBeatMapInfo(beatMapInfo, new PPPStarRating(-1)) { MapInfoRefreshFailed = true };
             }
         }
 
@@ -223,6 +232,7 @@ namespace PPPredictor.Core.Calculator
 
         private PPGainResult GetAccSaberScorePPGain(string mapSearchString, double pp, PPPMapPool mapPool)
         {
+            if (mapPool.ScoresRequireRefresh) return new PPGainResult(mapPool.CurrentPlayer.Pp, 0, 0, _settings.PpGainCalculationType);
             if(mapPool.MapPoolType != MapPoolType.Default)
             {
                 if (!HasCustomPoolScoreDataForPPGain(mapPool))
@@ -255,7 +265,7 @@ namespace PPPredictor.Core.Calculator
         {
             if (mapPool?.MapPoolType == MapPoolType.Default)
             {
-                return mapPool.Id != unsetPoolId && overallScoresLoaded;
+                return mapPool.Id != unsetPoolId && !mapPool.ScoresRequireRefresh && overallScoresLoaded;
             }
 
             return HasCustomPoolScoreDataForPPGain(mapPool);
@@ -356,13 +366,31 @@ namespace PPPredictor.Core.Calculator
         internal override async Task<PPPMapPoolShort> FindMapPoolForBeatMapInfoAsync(PPPBeatMapInfo beatMapInfo)
         {
             PPPMapPoolShort mapPool = FindMapPoolForBeatMapInfo(beatMapInfo);
-            if (mapPool != null || beatMapInfo == null || string.IsNullOrEmpty(beatMapInfo.CustomLevelHash))
+            if (beatMapInfo == null || string.IsNullOrEmpty(beatMapInfo.CustomLevelHash) || HasFreshMapInfo(beatMapInfo))
             {
                 return mapPool;
             }
 
             await LoadAccSaberMapByHash(beatMapInfo.CustomLevelHash);
             return FindMapPoolForBeatMapInfo(beatMapInfo);
+        }
+
+        private bool HasFreshMapInfo(PPPBeatMapInfo map)
+        {
+            string key = CreateSeachString(map.CustomLevelHash, map.BeatmapKey);
+            foreach (var pool in _dctMapPool.Values)
+            {
+                lock (pool.DataLock)
+                {
+                    var info = pool.LsLeaderboadInfo.FirstOrDefault(x => x.Searchstring == key);
+                    if (info != null)
+                    {
+                        var age = utcNow() - info.FetchTime.ToUniversalTime();
+                        if (age >= TimeSpan.Zero && age < _settings.MapInfoCacheDuration) return true;
+                    }
+                }
+            }
+            return false;
         }
 
         private void EnsureAccSaberMapPools()
@@ -393,120 +421,143 @@ namespace PPPredictor.Core.Calculator
 
         private bool LoadAccSaberMapCache()
         {
-            if (accSaberMapCacheLoaded)
-            {
-                return true;
-            }
-            if (string.IsNullOrEmpty(_settings.AccSaberMapCachePath) || !File.Exists(_settings.AccSaberMapCachePath))
-            {
-                return false;
-            }
-
+            if (string.IsNullOrEmpty(_settings.AccSaberMapCachePath) || !File.Exists(_settings.AccSaberMapCachePath)) return false;
+            (string Path, DateTime Write, long Length) stamp = default;
             try
             {
-                AccSaberMapCache mapCache = JsonConvert.DeserializeObject<AccSaberMapCache>(File.ReadAllText(_settings.AccSaberMapCachePath));
-                if (mapCache?.content == null)
-                {
-                    return false;
-                }
-
+                var file = new FileInfo(_settings.AccSaberMapCachePath);
+                stamp = (file.FullName, file.LastWriteTimeUtc, file.Length);
+                if (loadedFile.HasValue && loadedFile.Value == stamp) return true;
+                if (failedFile.HasValue && failedFile.Value == stamp && utcNow() < fileRetryAfterUtc) return loadedFile.HasValue;
+                var catalog = JsonConvert.DeserializeObject<AccSaberMapCache>(File.ReadAllText(file.FullName));
+                if (catalog?.content == null) throw new InvalidOperationException("AccSaber map cache has no content.");
                 EnsureAccSaberMapPools();
-                foreach (PPPMapPool mapPool in _dctMapPool.Values)
+                var incoming = _dctMapPool.Values.Where(x => x.Id != unsetPoolId).ToDictionary(x => x.Id, x => new List<ShortScore>());
+                foreach (var map in catalog.content)
                 {
-                    if (mapPool.Id == unsetPoolId)
+                    if (map.difficulties == null) throw new InvalidOperationException("AccSaber map cache has invalid difficulties.");
+                    foreach (var diff in map.difficulties)
                     {
-                        continue;
-                    }
-                    lock (mapPool.DataLock) mapPool.LsLeaderboadInfo.Clear();
-                }
-
-                foreach (AccSaberCachedMap map in mapCache.content)
-                {
-                    foreach (AccSaberCachedDifficulty difficulty in map.difficulties ?? new List<AccSaberCachedDifficulty>())
-                    {
-                        string categoryId = NormalizeCategoryToPoolId(difficulty.categoryCode);
-                        string categoryName = GetCategoryDisplayName(categoryId);
-                        if (_dctMapPool.TryGetValue(categoryId, out PPPMapPool categoryPool))
-                        {
-                            AddLeaderboardInfo(categoryPool, map.songHash, difficulty.difficulty, difficulty.complexity, categoryName);
-                        }
-                        if (_dctMapPool.TryGetValue("overall", out PPPMapPool overallPool))
-                        {
-                            AddLeaderboardInfo(overallPool, map.songHash, difficulty.difficulty, difficulty.complexity, categoryName);
-                        }
+                        string category = NormalizeCategoryToPoolId(diff.categoryCode);
+                        if (!incoming.ContainsKey(category)) throw new InvalidOperationException("AccSaber map cache has an unknown category.");
+                        var info = CreateMapInfo(map.songHash, diff.difficulty, diff.complexity, GetCategoryDisplayName(category),
+                            diff.characteristic, stamp.Write);
+                        incoming[category].Add(info);
+                        incoming["overall"].Add(info);
                     }
                 }
-
-                DateTime refreshTime = DateTime.UtcNow;
-                foreach (PPPMapPool mapPool in _dctMapPool.Values)
-                {
-                    if (mapPool.Id != unsetPoolId && mapPool.LsLeaderboadInfo.Count > 0)
-                    {
-                        mapPool.DtUtcLastRefresh = refreshTime;
-                    }
-                }
-                accSaberMapCacheLoaded = true;
+                PublishMapInfos(incoming, preserveNewerThanUtc: stamp.Write);
+                loadedFile = stamp;
+                failedFile = null;
+                mapCache.Clear();
+                failedMapLookups.Clear();
                 return true;
             }
             catch (Exception ex)
             {
-                Logging.ErrorPrint($"PPCalculatorAccSaber LoadAccSaberMapCache Error: {ex.Message}");
-                return false;
+                failedFile = stamp;
+                fileRetryAfterUtc = utcNow().AddSeconds(15);
+                Logging.ErrorPrint($"AccSaber map cache refresh failed; keeping previous catalog: {ex.Message}");
+                return loadedFile.HasValue;
             }
         }
 
-        private void AddLeaderboardInfo(PPPMapPool mapPool, string songHash, string difficulty, double complexity, string category)
+        private ShortScore CreateMapInfo(string hash, string difficulty, double complexity, string category, string mode, DateTime fetchedAtUtc)
         {
-            string searchString = CreateSeachString(songHash, "SoloStandard", ParseAccSaberDifficulty(difficulty));
-            lock (mapPool.DataLock)
-            {
-                if (mapPool.LsLeaderboadInfo.Any(x => x.Searchstring == searchString))
-                {
-                    return;
-                }
+            int value = ParseAccSaberDifficulty(difficulty);
+            if (string.IsNullOrEmpty(hash) || value < 0 || double.IsNaN(complexity) || double.IsInfinity(complexity) || complexity < 0)
+                throw new InvalidOperationException("AccSaber returned invalid map ratings.");
+            mode = mode ?? "Standard";
+            if (!mode.StartsWith("Solo", StringComparison.OrdinalIgnoreCase)) mode = "Solo" + mode;
+            return new ShortScore(CreateSeachString(hash, mode, value), new PPPStarRating(complexity), fetchedAtUtc.ToLocalTime(), category);
+        }
 
-                mapPool.LsLeaderboadInfo.Add(new ShortScore(searchString, new PPPStarRating(complexity), DateTime.Now, category));
+        private void PublishMapInfos(Dictionary<string, List<ShortScore>> incoming, string hash = null, DateTime? preserveNewerThanUtc = null)
+        {
+            if (preserveNewerThanUtc.HasValue)
+            {
+                var newer = _dctMapPool.Values.SelectMany(pool =>
+                {
+                    lock (pool.DataLock) return pool.LsLeaderboadInfo
+                        .Where(x => x.FetchTime.ToUniversalTime() > preserveNewerThanUtc.Value).ToArray();
+                }).GroupBy(x => x.Searchstring).Select(x => x.OrderByDescending(y => y.FetchTime).First());
+                foreach (var info in newer)
+                {
+                    foreach (var list in incoming.Values) list.RemoveAll(x => x.Searchstring == info.Searchstring);
+                    if (incoming.TryGetValue(NormalizeCategoryToPoolId(info.Category), out var category)) category.Add(info);
+                    if (incoming.TryGetValue("overall", out var overall)) overall.Add(info);
+                }
+            }
+            foreach (var pair in incoming)
+            {
+                var pool = _dctMapPool[pair.Key];
+                ShortScore[] previous;
+                lock (pool.DataLock)
+                    previous = pool.LsLeaderboadInfo.Where(x => hash == null || x.Searchstring.StartsWith(hash + "_", StringComparison.OrdinalIgnoreCase)).ToArray();
+                var next = pair.Value.GroupBy(x => x.Searchstring).Select(x => x.Last()).ToList();
+                foreach (var old in previous)
+                {
+                    var current = next.FirstOrDefault(x => x.Searchstring == old.Searchstring);
+                    MarkRatingChange(old.Searchstring, old.StarRating, current?.StarRating ?? new PPPStarRating(0),
+                        NormalizeCategoryToPoolId(old.Category) != NormalizeCategoryToPoolId(current?.Category));
+                }
+                lock (pool.DataLock)
+                {
+                    pool.LsLeaderboadInfo.RemoveAll(x => hash == null || x.Searchstring.StartsWith(hash + "_", StringComparison.OrdinalIgnoreCase));
+                    pool.LsLeaderboadInfo.AddRange(next);
+                    pool.DtUtcLastRefresh = utcNow();
+                }
+            }
+        }
+
+        private void AddLeaderboardInfo(PPPMapPool pool, string hash, string difficulty, double complexity, string category)
+        {
+            var info = CreateMapInfo(hash, difficulty, complexity, category, "Standard", utcNow());
+            ShortScore previous;
+            lock (pool.DataLock) previous = pool.LsLeaderboadInfo.FirstOrDefault(x => x.Searchstring == info.Searchstring);
+            MarkRatingChange(info.Searchstring, previous?.StarRating, info.StarRating);
+            lock (pool.DataLock)
+            {
+                pool.LsLeaderboadInfo.RemoveAll(x => x.Searchstring == info.Searchstring);
+                pool.LsLeaderboadInfo.Add(info);
             }
         }
 
         private async Task LoadAccSaberMapByHash(string hash)
         {
-            string normalizedHash = hash?.ToUpperInvariant();
-            if (string.IsNullOrEmpty(normalizedHash) || accSaberMapLookupMisses.Contains(normalizedHash))
+            if (string.IsNullOrEmpty(hash)) return;
+            EnsureAccSaberMapPools();
+            var response = await mapCache.Get(hash, async () =>
             {
+                var map = await accsaberapi.GetMapByHash(hash);
+                if (map == null) return null;
+                if (map.difficulties == null) throw new InvalidOperationException("AccSaber returned an invalid map response.");
+                foreach (var diff in map.difficulties)
+                {
+                    if (string.IsNullOrEmpty(NormalizeCategoryToPoolId(diff.categoryId)))
+                        throw new InvalidOperationException("AccSaber returned an unknown map category.");
+                    CreateMapInfo(hash, diff.difficulty, diff.complexity, diff.categoryId, diff.characteristic, utcNow());
+                }
+                return map.difficulties.Count == 0 ? null : map;
+            });
+            if (response.Error != null)
+            {
+                if (failedMapLookups.Count >= 512) failedMapLookups.Clear();
+                failedMapLookups.Add(hash);
+                Logging.ErrorPrint($"AccSaber map refresh failed; keeping cached rating: {response.Error.Message}");
                 return;
             }
-
-            try
+            failedMapLookups.Remove(hash);
+            var incoming = _dctMapPool.Values.Where(x => x.Id != unsetPoolId).ToDictionary(x => x.Id, x => new List<ShortScore>());
+            foreach (var diff in response.Value?.difficulties ?? new List<AccSaberMapDifficulty>())
             {
-                EnsureAccSaberMapPools();
-                AccSaberMap map = await accsaberapi.GetMapByHash(normalizedHash);
-                if (map?.difficulties == null || map.difficulties.Count == 0)
-                {
-                    accSaberMapLookupMisses.Add(normalizedHash);
-                    return;
-                }
-
-                string songHash = string.IsNullOrEmpty(map.songHash) ? normalizedHash : map.songHash;
-                foreach (AccSaberMapDifficulty difficulty in map.difficulties)
-                {
-                    string categoryId = NormalizeCategoryToPoolId(difficulty.categoryId);
-                    string categoryName = GetCategoryDisplayName(categoryId);
-                    if (_dctMapPool.TryGetValue(categoryId, out PPPMapPool categoryPool))
-                    {
-                        AddLeaderboardInfo(categoryPool, songHash, difficulty.difficulty, difficulty.complexity, categoryName);
-                    }
-                    if (_dctMapPool.TryGetValue("overall", out PPPMapPool overallPool))
-                    {
-                        AddLeaderboardInfo(overallPool, songHash, difficulty.difficulty, difficulty.complexity, categoryName);
-                    }
-                }
+                string category = NormalizeCategoryToPoolId(diff.categoryId);
+                var info = CreateMapInfo(hash, diff.difficulty, diff.complexity, GetCategoryDisplayName(category),
+                    diff.characteristic, response.FetchedAtUtc);
+                incoming[category].Add(info);
+                incoming["overall"].Add(info);
             }
-            catch (Exception ex)
-            {
-                accSaberMapLookupMisses.Add(normalizedHash);
-                Logging.ErrorPrint($"PPCalculatorAccSaber LoadAccSaberMapByHash Error: {ex.Message}");
-            }
+            PublishMapInfos(incoming, hash);
         }
 
         private int ParseAccSaberDifficulty(string difficulty)
@@ -546,6 +597,7 @@ namespace PPPredictor.Core.Calculator
 
         private class AccSaberCachedDifficulty
         {
+            public string characteristic { get; set; }
             public string difficulty { get; set; }
             public double complexity { get; set; }
             public string categoryCode { get; set; }

@@ -38,5 +38,11 @@ namespace PPPredictor.Core.API
         {
             return await NetworkUtil.GetDataAsync<ScoreSaberPlayerScoreList>(client, DataType.Enums.Leaderboard.ScoreSaber, "GetPlayerScores", $"player/{playerId}/scores?limit={limit}&sort=recent&page={page}&withMetadata=true");
         }
+
+        public Task<ScoreSaberLeaderboardInfo> GetLeaderboardInfo(string hash, int difficulty, string gameMode)
+        {
+            return NetworkUtil.GetDataAsync<ScoreSaberLeaderboardInfo>(client, DataType.Enums.Leaderboard.ScoreSaber,
+                "GetLeaderboardInfo", $"leaderboard/by-hash/{Uri.EscapeDataString(hash)}/info?difficulty={difficulty}&gameMode={Uri.EscapeDataString(gameMode)}", allowNotFound: true);
+        }
     }
 }

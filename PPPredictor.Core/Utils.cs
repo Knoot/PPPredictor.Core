@@ -33,7 +33,7 @@ namespace PPPredictor.Core
 
     public class NetworkUtil
     {
-        internal static async System.Threading.Tasks.Task<T> GetDataAsync<T>(HttpClient client, Leaderboard leaderboard, string callingMethod, string requestUrl) where T : new()
+        internal static async System.Threading.Tasks.Task<T> GetDataAsync<T>(HttpClient client, Leaderboard leaderboard, string callingMethod, string requestUrl, bool allowNotFound = false) where T : new()
         {
             for (int attempt = 0; ; attempt++)
             {
@@ -43,6 +43,7 @@ namespace PPPredictor.Core
                     using (HttpResponseMessage response = await client.GetAsync(requestUrl))
                     {
                         receivedResponse = true;
+                        if (allowNotFound && response.StatusCode == System.Net.HttpStatusCode.NotFound) return default(T);
                         Logging.DebugNetworkPrint($"{leaderboard}Network: {response.RequestMessage?.RequestUri}", leaderboard);
                         int status = (int)response.StatusCode;
                         if (attempt < 2 && (status == 408 || status == 429 || status >= 500))

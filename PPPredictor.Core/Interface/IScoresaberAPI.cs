@@ -10,5 +10,6 @@ namespace PPPredictor.Core.Interface
         Task<ScoreSaberPlayer> GetPlayer(long playerId);
 
         Task<ScoreSaberPlayerScoreList> GetPlayerScores(string playerId, int? limit, int? page);
+        Task<ScoreSaberLeaderboardInfo> GetLeaderboardInfo(string hash, int difficulty, string gameMode);
     }
 }

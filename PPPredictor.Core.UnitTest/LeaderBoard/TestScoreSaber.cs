@@ -73,9 +73,10 @@ namespace PPPredictor.Core.UnitTest.LeaderBoard
                 }
                 );
 
-            lsBeatMapInfos.Add(new PPPBeatMapInfo(new PPPBeatMapInfo("HASH", new BeatmapKey()), new PPPStarRating(10)));
+            var key = new BeatmapKey { serializedName = "Standard", difficulty = BeatMapDifficulty.ExpertPlus };
+            lsBeatMapInfos.Add(new PPPBeatMapInfo(new PPPBeatMapInfo("HASH", key), new PPPStarRating(10)));
 
-            PPPBeatMapInfo returnInfo = await ci.GetBeatMapInfoAsync(Enums.Leaderboard.ScoreSaber, "-1", new PPPBeatMapInfo("HASH", new BeatmapKey()));
+            PPPBeatMapInfo returnInfo = await ci.GetBeatMapInfoAsync(Enums.Leaderboard.ScoreSaber, "-1", new PPPBeatMapInfo("HASH", key));
             Assert.IsNotNull(returnInfo);
             Assert.AreEqual(10, returnInfo.ModifiedStarRating.Stars);
             returnInfo = ci.ApplyModifiersToBeatmapInfo(Enums.Leaderboard.ScoreSaber, "-1", returnInfo, new GameplayModifiers(), true, true);
@@ -88,7 +89,7 @@ namespace PPPredictor.Core.UnitTest.LeaderBoard
             Assert.AreEqual(0, returnInfo.ModifiedStarRating.Stars);
 
             lsBeatMapInfos = null;
-            returnInfo = await ci.GetBeatMapInfoAsync(Enums.Leaderboard.ScoreSaber, "-1", new PPPBeatMapInfo("HASH", new BeatmapKey()));
+            returnInfo = await ci.GetBeatMapInfoAsync(Enums.Leaderboard.ScoreSaber, "-1", new PPPBeatMapInfo("HASH", key));
             Assert.AreEqual(-1, returnInfo.ModifiedStarRating.Stars);
         }
 
@@ -217,6 +218,8 @@ namespace PPPredictor.Core.UnitTest.LeaderBoard
 
         private sealed class EmptyScoreSaberApi : IScoresaberAPI
         {
+            public Task<ScoreSaberDataTypes.ScoreSaberLeaderboardInfo> GetLeaderboardInfo(string hash, int difficulty, string gameMode)
+                => throw new NotSupportedException();
             public Task<ScoreSaberDataTypes.ScoreSaberPlayer> GetPlayer(long playerId)
                 => Task.FromResult(new ScoreSaberDataTypes.ScoreSaberPlayer { pp = 0 });
 

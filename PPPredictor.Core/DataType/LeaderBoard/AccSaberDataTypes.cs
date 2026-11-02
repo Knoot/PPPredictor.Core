@@ -15,6 +15,7 @@ namespace PPPredictor.Core.DataType.LeaderBoard
             public DateTime timeSet { get; set; }
             public string categoryDisplayName { get; set; }
             public string categoryId { get; set; }
+            public string characteristic { get; set; }
         }
 
         internal class AccSaberPlayer
@@ -49,6 +50,8 @@ namespace PPPredictor.Core.DataType.LeaderBoard
 
         internal class AccSaberMapDifficulty
         {
+            public string status { get; set; }
+            public string characteristic { get; set; }
             public string categoryId { get; set; }
             public string difficulty { get; set; }
             public double complexity { get; set; }

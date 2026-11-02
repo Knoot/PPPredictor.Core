@@ -17,6 +17,7 @@ namespace UnitTests.LeaderBoard
         {
             internal List<AccSaberScores> Scores = new();
             internal bool Fail;
+            internal Func<string, AccSaberMap> Map = _ => new AccSaberMap();
             public Task<List<AccSaberScores>> GetAllScores(string userId) => Fail
                 ? throw new InvalidOperationException("offline") : Task.FromResult(Scores);
             public Task<List<AccSaberScores>> GetAllScoresByPool(string userId, string poolId) => Fail
@@ -24,7 +25,7 @@ namespace UnitTests.LeaderBoard
             public Task<AccSaberPlayer> GetAccSaberUserByPool(long userId, string poolIdent) => Task.FromResult(new AccSaberPlayer());
             public Task<List<AccSaberRankedMap>> GetAllRankedMaps() => Task.FromResult(new List<AccSaberRankedMap>());
             public Task<List<AccSaberRankedMap>> GetRankedMaps(string pool) => GetAllRankedMaps();
-            public Task<AccSaberMap> GetMapByHash(string hash) => Task.FromResult(new AccSaberMap());
+            public Task<AccSaberMap> GetMapByHash(string hash) => Task.FromResult(Map(hash));
             public Task<List<AccSaberMapPool>> GetAccSaberMapPools() => Task.FromResult(new List<AccSaberMapPool>());
             public Task<List<AccSaberPlayer>> GetPlayerListForMapPool(double page, string pool) => Task.FromResult(new List<AccSaberPlayer>());
         }

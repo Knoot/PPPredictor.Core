@@ -136,7 +136,7 @@ namespace PPPredictor.Core.Calculator
             }
         }
 
-        internal async Task<bool> GetPlayerScores(PPPMapPool mapPool, int pageSize, int largePageSize, bool fetchOnePage = false, Action<int, int> progressChanged = null, PPPScoreSetData expectedScore = null)
+        internal async Task<bool> GetPlayerScores(PPPMapPool mapPool, int pageSize, int largePageSize, bool fetchOnePage = false, Action<int, int> progressChanged = null, PPPScoreSetData expectedScore = null, bool forceFullRefresh = false)
         {
             try
             {
@@ -146,12 +146,13 @@ namespace PPPredictor.Core.Calculator
                 bool hasCompleteCache;
                 lock (mapPool.DataLock)
                 {
+                    forceFullRefresh |= mapPool.ScoresRequireRefresh;
                     cachedScores = (mapPool.LsScores ?? new List<ShortScore>()).GroupBy(x => x.Searchstring)
                         .ToDictionary(x => x.Key, x => new ShortScore(x.Key, x.Max(s => s.Pp)));
                     lastScoreSet = mapPool.DtLastScoreSet;
-                    hasCompleteCache = mapPool.HasScoreDataFetched;
+                    hasCompleteCache = mapPool.HasScoreDataFetched && !forceFullRefresh;
                 }
-                bool hasNoScores = cachedScores.Count == 0;
+                bool hasNoScores = cachedScores.Count == 0 || forceFullRefresh;
                 bool expectedScoreFound = expectedScore == null;
                 bool fetchedAllScores = false;
                 bool hasMoreData = true;
@@ -182,7 +183,7 @@ namespace PPPredictor.Core.Calculator
                             hasMoreData = false;
                         }
                     }
-                    fetchedAllScores = _leaderboardInfo.HasGetAllScoresFunctionality && (!_leaderboardInfo.HasGetRecentScoresFunctionality || hasNoScores);
+                    fetchedAllScores = forceFullRefresh || (_leaderboardInfo.HasGetAllScoresFunctionality && (!_leaderboardInfo.HasGetRecentScoresFunctionality || hasNoScores));
                     foreach (PPPScore scores in playerscores.LsPPPScore)
                     {
                         string searchString = CreateSeachString(scores.SongHash, scores.GameMode, (int)scores.Difficulty1);
@@ -220,7 +221,7 @@ namespace PPPredictor.Core.Calculator
                 // Publish scores, lookup indices and weighted sums together; never hold this lock during HTTP requests.
                 lock (mapPool.DataLock)
                 {
-                    if (mapPool.LsScores == null || (fetchedAllScores && ReplaceScoresOnFullFetch(mapPool)))
+                    if (mapPool.LsScores == null || forceFullRefresh || (fetchedAllScores && ReplaceScoresOnFullFetch(mapPool)))
                         mapPool.LsScores = new List<ShortScore>();
                     foreach (ShortScore newScore in lsNewScores
                         .GroupBy(x => x.Searchstring)
@@ -241,6 +242,7 @@ namespace PPPredictor.Core.Calculator
                     mapPool.DtLastScoreSet = dtNewLastScoreSet > mapPool.DtLastScoreSet ? dtNewLastScoreSet : mapPool.DtLastScoreSet;
                     mapPool.HasScoreDataFetched = true;
                     mapPool.ScoreRefreshFailed = !expectedScoreFound;
+                    if (fetchedAllScores) mapPool.ScoresRequireRefresh = false;
                     OnScoresCommitted(mapPool);
                 }
                 return expectedScoreFound;
@@ -256,15 +258,28 @@ namespace PPPredictor.Core.Calculator
         protected virtual bool ReplaceScoresOnFullFetch(PPPMapPool mapPool) => false;
         protected virtual void OnScoresCommitted(PPPMapPool mapPool) { }
 
+        protected void MarkRatingChange(string searchString, PPPStarRating previous, PPPStarRating current, bool categoryChanged = false)
+        {
+            if (previous == null || (previous.HasSameRatings(current) && !categoryChanged)) return;
+            foreach (var pool in _dctMapPool.Values)
+            {
+                lock (pool.DataLock)
+                    if (pool.LsScores?.Any(x => x.Searchstring == searchString) == true) pool.ScoresRequireRefresh = true;
+            }
+        }
+
         internal virtual PPGainResult GetPlayerScorePPGain(string mapSearchString, double pp, PPPMapPool mapPool)
         {
             lock (mapPool.DataLock)
+            {
+                if (mapPool.ScoresRequireRefresh) return new PPGainResult(mapPool.CurrentPlayer.Pp, 0, 0, _settings.PpGainCalculationType);
                 return GetPlayerScorePPGainInternal(mapPool.LsScores, mapSearchString, pp, mapPool.CurrentPlayer.Pp, mapPool);
+            }
         }
 
         internal virtual bool HasScoreDataForPPGain(PPPMapPool mapPool)
         {
-            return mapPool != null && (mapPool.HasScoreDataFetched || (mapPool.LsScores != null && mapPool.LsScores.Count > 0));
+            return mapPool != null && !mapPool.ScoresRequireRefresh && (mapPool.HasScoreDataFetched || (mapPool.LsScores != null && mapPool.LsScores.Count > 0));
         }
 
         internal PPGainResult GetPlayerScorePPGainInternal(List<ShortScore> lsScores, string mapSearchString, double pp, double currentTotalPP, PPPMapPool mapPool)

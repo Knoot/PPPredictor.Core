@@ -15,15 +15,16 @@ namespace PPPredictor.Core.API
     {
         private static readonly string baseUrl = "https://api.accsaber.com/v1/";
         private readonly HttpClient client;
-        private List<AccSaberMapPool> categories;
+        private readonly TimedAsyncCache<List<AccSaberMapPool>> categories;
 
         public AccSaberApi() : this(new HttpClient())
         {
         }
 
-        internal AccSaberApi(HttpClient client)
+        internal AccSaberApi(HttpClient client, Func<DateTime> utcNow = null)
         {
             this.client = client;
+            categories = new TimedAsyncCache<List<AccSaberMapPool>>(TimeSpan.FromHours(1), utcNow);
             client.DefaultRequestHeaders.Accept.Clear();
             client.DefaultRequestHeaders.Add("User-Agent", "PPPredictor");
             client.DefaultRequestHeaders.Accept.Add(
@@ -100,19 +101,18 @@ namespace PPPredictor.Core.API
 
         public async Task<AccSaberMap> GetMapByHash(string hash)
         {
-            AccSaberMap map = await NetworkUtil.GetDataAsync<AccSaberMap>(client, DataType.Enums.Leaderboard.AccSaber, "GetMapByHash", $"maps/hash/{hash}");
-            if (map?.difficulties == null)
-            {
-                return map;
-            }
+            AccSaberMap map = await NetworkUtil.GetDataAsync<AccSaberMap>(client, DataType.Enums.Leaderboard.AccSaber, "GetMapByHash", $"maps/hash/{hash}", allowNotFound: true);
+            if (map == null) return null;
+            if (map.difficulties == null) throw new InvalidOperationException("AccSaber returned an invalid map response.");
+            map.difficulties = map.difficulties.Where(x => x.status == null || string.Equals(x.status, "RANKED", StringComparison.OrdinalIgnoreCase)).ToList();
+            if (map.difficulties.Count == 0) return null;
 
             Dictionary<string, string> displayNamesById = (await GetCategories()).ToDictionary(x => x.id, x => x.categoryDisplayName);
             foreach (AccSaberMapDifficulty difficulty in map.difficulties)
             {
-                if (difficulty.categoryId != null && displayNamesById.TryGetValue(difficulty.categoryId, out string displayName))
-                {
-                    difficulty.categoryId = displayName;
-                }
+                if (difficulty.categoryId == null || !displayNamesById.TryGetValue(difficulty.categoryId, out string displayName))
+                    throw new InvalidOperationException("AccSaber map references an unknown category.");
+                difficulty.categoryId = displayName;
             }
 
             return map;
@@ -125,13 +125,12 @@ namespace PPPredictor.Core.API
 
         private async Task<List<AccSaberMapPool>> GetCategories()
         {
-            if (categories != null)
+            var result = await categories.Get("categories", async () =>
             {
-                return categories;
-            }
-
-            List<AccSaberMapPool> apiCategories = await NetworkUtil.GetDataAsync<List<AccSaberMapPool>>(client, DataType.Enums.Leaderboard.AccSaber, "GetAccSaberMapPools", "categories");
-            categories = apiCategories
+                List<AccSaberMapPool> apiCategories = await NetworkUtil.GetDataAsync<List<AccSaberMapPool>>(client, DataType.Enums.Leaderboard.AccSaber, "GetAccSaberMapPools", "categories");
+                if (apiCategories.Count == 0 || apiCategories.Any(x => string.IsNullOrEmpty(x.id) || string.IsNullOrEmpty(x.code)))
+                    throw new InvalidOperationException("AccSaber returned an empty or invalid category list.");
+                var normalized = apiCategories
                 .Select(x => new AccSaberMapPool
                 {
                     id = x.id,
@@ -140,8 +139,12 @@ namespace PPPredictor.Core.API
                     categoryName = NormalizeCategoryToPoolId(x.code),
                     categoryDisplayName = x.name
                 })
-                .ToList();
-            return categories;
+                .Where(x => !string.IsNullOrEmpty(x.categoryName)).ToList();
+                if (normalized.Count == 0) throw new InvalidOperationException("AccSaber returned no recognized categories.");
+                return normalized;
+            });
+            if (result.Value == null) throw result.Error ?? new InvalidOperationException("AccSaber categories are unavailable.");
+            return result.Value;
         }
 
         private async Task<string> GetCategoryId(string poolId)

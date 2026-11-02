@@ -86,5 +86,23 @@ namespace PPPredictor.Core.DataType
 
             return _predictedAcc > 0 || _passRating > 0 || _accRating > 0 || _techRating > 0 || _stars > 0;      
         }
+
+        internal bool HasSameRatings(PPPStarRating other)
+        {
+            return other != null && IsRanked() == other.IsRanked() && Stars == other.Stars
+                && PredictedAcc == other.PredictedAcc && AccRating == other.AccRating && PassRating == other.PassRating
+                && TechRating == other.TechRating && SliderPercentage == other.SliderPercentage
+                && Notes == other.Notes && NoteSpan == other.NoteSpan
+                && SameValues(ModifiersRating, other.ModifiersRating) && SameValues(ModifierValues, other.ModifierValues);
+        }
+
+        private static bool SameValues(Dictionary<string, double> first, Dictionary<string, double> second)
+        {
+            if ((first?.Count ?? 0) != (second?.Count ?? 0)) return false;
+            if (first == null || first.Count == 0) return true;
+            foreach (var pair in first)
+                if (!second.TryGetValue(pair.Key, out double value) || value != pair.Value) return false;
+            return true;
+        }
     }
 }

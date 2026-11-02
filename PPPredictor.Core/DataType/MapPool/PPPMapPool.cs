@@ -78,6 +78,8 @@ namespace PPPredictor.Core.DataType.MapPool
         public bool ScoreRefreshFailed { get; internal set; }
         [JsonIgnore]
         public bool ProfileRefreshFailed { get; internal set; }
+        [JsonProperty]
+        public bool ScoresRequireRefresh { get; internal set; }
         [JsonIgnore]
         public Dictionary<int, double> DctWeightLookup { get => dctWeightLookup; }
         public string CustomLeaderboardUserId { get => _customLeaderboardUserId; set => _customLeaderboardUserId = value; }

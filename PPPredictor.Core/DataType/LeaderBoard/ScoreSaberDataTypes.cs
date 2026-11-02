@@ -45,6 +45,8 @@ namespace PPPredictor.Core.DataType.LeaderBoard
 
         public class ScoreSaberLeaderboardInfo
         {
+            public double stars { get; set; }
+            public bool ranked { get; set; }
             public string songHash { get; set; }
             public ScoreSaberDifficulty difficulty { get; set; } = new ScoreSaberDifficulty();
         }

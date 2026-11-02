@@ -215,11 +215,11 @@ namespace PPPredictor.Core
             );
         }
 
-        public async Task<bool> GetPlayerScores(Leaderboard leaderBoard, string mapPoolId, int pageSize, int largePageSize, bool fetchOnePage = false, Action<int, int> progressChanged = null, PPPScoreSetData expectedScore = null)
+        public async Task<bool> GetPlayerScores(Leaderboard leaderBoard, string mapPoolId, int pageSize, int largePageSize, bool fetchOnePage = false, Action<int, int> progressChanged = null, PPPScoreSetData expectedScore = null, bool forceFullRefresh = false)
         {
             (PPCalculator calculator, PPPMapPool mapPool) = GetCalculatorAndMapPool(leaderBoard, mapPoolId);
             return await SemaphoreFunction(calculator.Semaphore,
-                () => Task.Run(() => calculator.GetPlayerScores(mapPool, pageSize, largePageSize, fetchOnePage, progressChanged, expectedScore))
+                () => Task.Run(() => calculator.GetPlayerScores(mapPool, pageSize, largePageSize, fetchOnePage, progressChanged, expectedScore, forceFullRefresh))
             );
         }
 
@@ -227,6 +227,12 @@ namespace PPPredictor.Core
         {
             var (_, mapPool) = GetCalculatorAndMapPool(leaderBoard, mapPoolId);
             lock (mapPool.DataLock) return mapPool.ScoreRefreshFailed || mapPool.ProfileRefreshFailed;
+        }
+
+        public bool RequiresScoreRefresh(Leaderboard leaderBoard, string mapPoolId)
+        {
+            var (_, pool) = GetCalculatorAndMapPool(leaderBoard, mapPoolId);
+            lock (pool.DataLock) return pool.ScoresRequireRefresh;
         }
 
         public Dictionary<string, LeaderboardData> GetSaveData()

@@ -31,7 +31,7 @@ namespace PPPredictor.Core.API
 
         public async Task<BeatLeaderSong> GetSongByHash(string hash)
         {
-            return await NetworkUtil.GetDataAsync<BeatLeaderSong>(client, DataType.Enums.Leaderboard.BeatLeader, "GetSongByHash", $"/map/hash/{hash}");
+            return await NetworkUtil.GetDataAsync<BeatLeaderSong>(client, DataType.Enums.Leaderboard.BeatLeader, "GetSongByHash", $"/map/hash/{hash}", allowNotFound: true);
         }
 
         public async Task<BeatLeaderPlayer> GetPlayer(long userId, long leaderboardContextId)

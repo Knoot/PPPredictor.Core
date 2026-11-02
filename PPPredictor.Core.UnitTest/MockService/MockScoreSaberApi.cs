@@ -45,5 +45,8 @@ namespace PPPredictor.Core.UnitTest.MockService
         {
             throw new NotImplementedException();
         }
+
+        public Task<ScoreSaberLeaderboardInfo> GetLeaderboardInfo(string hash, int difficulty, string gameMode)
+            => throw new NotSupportedException();
     }
 }
