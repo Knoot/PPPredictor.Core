@@ -353,8 +353,8 @@ namespace PPPredictor.Core.Calculator
                             ppAfterPlay += weightedScore;
                         }
 
-                        double ppGainWeighted = Zeroizer(Math.Round(ppAfterPlay - ppBeforePlay, 2, MidpointRounding.AwayFromZero), 0.02);
-                        double ppTotal = Math.Round(currentTotalPP + ppGainWeighted, 2, MidpointRounding.AwayFromZero);
+                        double ppGainWeighted = Math.Max(0, ppAfterPlay - ppBeforePlay);
+                        double ppTotal = currentTotalPP + ppGainWeighted;
                         return new PPGainResult(ppTotal, ppGainWeighted, pp - previousPP, _settings.PpGainCalculationType);
                     }
                     return new PPGainResult(currentTotalPP, pp, oldScore != null ? -oldScore.Pp : 0, _settings.PpGainCalculationType);

@@ -259,7 +259,7 @@ namespace PPPredictor.Core.Calculator
                     }
 
                     PPGainResult ppGain = GetPlayerScorePPGainInternal(categoryPool.LsScores, mapSearchString, pp, categoryPool.CurrentPlayer.Pp, categoryPool);
-                    return new PPGainResult(Math.Round(mapPool.CurrentPlayer.Pp + ppGain.PpGainWeighted, 2, MidpointRounding.AwayFromZero),
+                    return new PPGainResult(mapPool.CurrentPlayer.Pp + ppGain.PpGainWeighted,
                         ppGain.PpGainWeighted, ppGain.PpGainRaw, _settings.PpGainCalculationType);
                 }
                 return new PPGainResult(mapPool.CurrentPlayer.Pp, 0, 0, _settings.PpGainCalculationType);

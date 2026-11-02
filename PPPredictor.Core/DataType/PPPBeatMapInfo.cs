@@ -33,5 +33,22 @@
             _customLevelHash = customLevelHash;
             this._beatmapkey = beatmapKey;
         }
+
+        internal PPPBeatMapInfo Copy() => new PPPBeatMapInfo
+        {
+            CustomLevelHash = CustomLevelHash,
+            BeatmapKey = BeatmapKey == null ? null : new BeatSaberEncapsulation.BeatmapKey
+            {
+                serializedName = BeatmapKey.serializedName,
+                difficulty = BeatmapKey.difficulty
+            },
+            BaseStarRating = BaseStarRating?.Copy(),
+            ModifiedStarRating = ModifiedStarRating?.Copy(),
+            MaxPP = MaxPP,
+            CalculationBlockReason = CalculationBlockReason,
+            SelectedMapSearchString = SelectedMapSearchString,
+            OldDotsEnabled = OldDotsEnabled,
+            MapInfoRefreshFailed = MapInfoRefreshFailed
+        };
     }
 }

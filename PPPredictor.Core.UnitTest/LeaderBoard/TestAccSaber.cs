@@ -73,9 +73,9 @@ namespace UnitTests.LeaderBoard
             Assert.IsTrue(await calculator.GetPlayerScores(pool, 10, 100));
             var gain = calculator.GetPlayerScorePPGain(hash + "_SOLOSTANDARD_9", candidate, pool);
             var replacement = scores.Where(x => x.songHash != hash).Append(Score(hash, candidate, "tech"));
-            double expected = Math.Round(Total(replacement) - Total(scores), 2, MidpointRounding.AwayFromZero);
+            double expected = Total(replacement) - Total(scores);
             Assert.AreEqual(expected, gain.PpGainWeighted, 1e-8);
-            Assert.AreEqual(Math.Round(pool.CurrentPlayer.Pp + expected, 2, MidpointRounding.AwayFromZero), gain.PpTotal, 1e-8);
+            Assert.AreEqual(pool.CurrentPlayer.Pp + expected, gain.PpTotal, 1e-8);
         }
 
         [DataTestMethod]
@@ -163,9 +163,8 @@ namespace UnitTests.LeaderBoard
             var calculator = Calculator(pool, new Api { Scores = scores });
             await calculator.GetPlayerScores(pool, 10, 100);
             Assert.AreEqual(2, pool.LsScores.Count);
-            double expected = Math.Round(Total(new[] { otherDifficulty, Score("TARGET", 250, "tech") }) - Total(scores),
-                2, MidpointRounding.AwayFromZero);
-            Assert.AreEqual(expected, calculator.GetPlayerScorePPGain(Target, 250, pool).PpGainWeighted);
+            double expected = Total(new[] { otherDifficulty, Score("TARGET", 250, "tech") }) - Total(scores);
+            Assert.AreEqual(expected, calculator.GetPlayerScorePPGain(Target, 250, pool).PpGainWeighted, 1e-8);
         }
 
         [TestMethod]
@@ -178,9 +177,8 @@ namespace UnitTests.LeaderBoard
             });
             await calculator.GetPlayerScores(pool, 10, 100);
             var normalized = new[] { Score("OTHER", 400, "tech"), Score("TARGET", 200, "tech") };
-            double expected = Math.Round(Total(new[] { Score("OTHER", 400, "tech"), Score("TARGET", 250, "tech") }) - Total(normalized),
-                2, MidpointRounding.AwayFromZero);
-            Assert.AreEqual(expected, calculator.GetPlayerScorePPGain(Target, 250, pool).PpGainWeighted);
+            double expected = Total(new[] { Score("OTHER", 400, "tech"), Score("TARGET", 250, "tech") }) - Total(normalized);
+            Assert.AreEqual(expected, calculator.GetPlayerScorePPGain(Target, 250, pool).PpGainWeighted, 1e-8);
         }
 
         [TestMethod]

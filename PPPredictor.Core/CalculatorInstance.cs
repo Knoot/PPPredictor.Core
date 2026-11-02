@@ -172,7 +172,10 @@ namespace PPPredictor.Core
         public PPPBeatMapInfo ApplyModifiersToBeatmapInfo(Leaderboard leaderBoard, string mapPoolId, PPPBeatMapInfo beatMapInfo, DataType.BeatSaberEncapsulation.GameplayModifiers gameplayModifiers, bool levelFailed = false, bool levelPaused = false)
         {
             (PPCalculator calculator, PPPMapPool mapPool) = GetCalculatorAndMapPool(leaderBoard, mapPoolId);
-            return calculator.ApplyModifiersToBeatmapInfo(beatMapInfo, mapPool, gameplayModifiers, levelFailed, levelPaused);
+            var snapshot = beatMapInfo.Copy();
+            snapshot.MaxPP = -1;
+            snapshot.CalculationBlockReason = PPCalculationBlockReason.None;
+            return calculator.ApplyModifiersToBeatmapInfo(snapshot, mapPool, gameplayModifiers, levelFailed, levelPaused);
         }
 
         public double CalculateMaxPP(Leaderboard leaderBoard, string mapPoolId, PPPBeatMapInfo currentBeatMapInfo)

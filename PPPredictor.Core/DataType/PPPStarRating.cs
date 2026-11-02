@@ -96,6 +96,14 @@ namespace PPPredictor.Core.DataType
                 && SameValues(ModifiersRating, other.ModifiersRating) && SameValues(ModifierValues, other.ModifierValues);
         }
 
+        internal PPPStarRating Copy()
+        {
+            var copy = (PPPStarRating)MemberwiseClone();
+            copy.ModifierValues = ModifierValues == null ? null : new Dictionary<string, double>(ModifierValues, ModifierValues.Comparer);
+            copy.ModifiersRating = ModifiersRating == null ? null : new Dictionary<string, double>(ModifiersRating, ModifiersRating.Comparer);
+            return copy;
+        }
+
         private static bool SameValues(Dictionary<string, double> first, Dictionary<string, double> second)
         {
             if ((first?.Count ?? 0) != (second?.Count ?? 0)) return false;

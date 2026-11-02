@@ -176,7 +176,11 @@ namespace PPPredictor.Core.UnitTest.LeaderBoard
 
             //Improve score
             gain = ci.GetPlayerScorePPGain(Enums.Leaderboard.ScoreSaber, "-1", "HASH_10", 299);
-            Assert.AreEqual(7.30, gain.PpGainWeighted, 0.001);
+            double Total(IEnumerable<double> scores) => scores.OrderByDescending(x => x)
+                .Select((pp, index) => pp * Math.Pow(dctMapPool["-1"].AccumulationConstant, index)).Sum();
+            double expectedGain = Total(dctMapPool["-1"].LsScores.Where(x => x.Searchstring != "HASH_10").Select(x => x.Pp).Append(299))
+                - Total(dctMapPool["-1"].LsScores.Select(x => x.Pp));
+            Assert.AreEqual(expectedGain, gain.PpGainWeighted, 1e-8);
 
             //Improving best score
             gain = ci.GetPlayerScorePPGain(Enums.Leaderboard.ScoreSaber, "-1", "HASH_0", 333);
@@ -197,8 +201,8 @@ namespace PPPredictor.Core.UnitTest.LeaderBoard
 
             dctMapPool["-1"].CurrentPlayer.Pp = 9000;
             gain = ci.GetPlayerScorePPGain(Enums.Leaderboard.ScoreSaber, "-1", "HASH_10", 299);
-            Assert.AreEqual(9007.30, gain.PpTotal, 0.001);
-            Assert.AreEqual(7.30, gain.PpGainWeighted, 0.001);
+            Assert.AreEqual(9000 + expectedGain, gain.PpTotal, 1e-8);
+            Assert.AreEqual(expectedGain, gain.PpGainWeighted, 1e-8);
 
             dctMapPool["-1"].LsScores = null;
             ci = await CalculatorInstance.CreateAsyncMock<MockScoreSaberApi, MockBeatLeader, MockHitBloq, MockAccSaber>(
