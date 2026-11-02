@@ -17,9 +17,13 @@ namespace PPPredictor.Core.API
         private readonly HttpClient client;
         private List<AccSaberMapPool> categories;
 
-        public AccSaberApi()
+        public AccSaberApi() : this(new HttpClient())
         {
-            client = new HttpClient();
+        }
+
+        internal AccSaberApi(HttpClient client)
+        {
+            this.client = client;
             client.DefaultRequestHeaders.Accept.Clear();
             client.DefaultRequestHeaders.Add("User-Agent", "PPPredictor");
             client.DefaultRequestHeaders.Accept.Add(
@@ -35,6 +39,8 @@ namespace PPPredictor.Core.API
             while (hasMoreData)
             {
                 AccSaberScorePage page = await NetworkUtil.GetDataAsync<AccSaberScorePage>(client, DataType.Enums.Leaderboard.AccSaber, "GetAllScores", $"users/{userId}/scores?page={pageIndex}&size=100");
+                if (page.content == null || (page.content.Count == 0 && !page.last))
+                    throw new InvalidOperationException("Invalid or incomplete AccSaber scores page.");
                 scores.AddRange(page.content ?? new List<AccSaberScores>());
                 hasMoreData = page.content != null && page.content.Count > 0 && !page.last;
                 pageIndex++;
@@ -50,7 +56,7 @@ namespace PPPredictor.Core.API
             string categoryId = await GetCategoryId(poolId);
             if (string.IsNullOrEmpty(categoryId))
             {
-                return new List<AccSaberScores>();
+                throw new InvalidOperationException($"AccSaber category not found: {poolId}");
             }
 
             return scores.Where(x => x.categoryId == categoryId).ToList();
@@ -60,6 +66,8 @@ namespace PPPredictor.Core.API
         {
             AccSaberStatisticsCollection statistics = await NetworkUtil.GetDataAsync<AccSaberStatisticsCollection>(client, DataType.Enums.Leaderboard.AccSaber, "GetAccSaberUserByPool", $"users/{userId}/statistics/all");
             string categoryId = await GetCategoryId(poolIdent);
+            if (statistics.categories == null || string.IsNullOrEmpty(categoryId))
+                throw new InvalidOperationException("Invalid AccSaber statistics or unknown category.");
             AccSaberStatistics categoryStatistics = statistics.categories?.FirstOrDefault(x => x.categoryId == categoryId);
             if (categoryStatistics == null)
             {

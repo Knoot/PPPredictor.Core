@@ -43,6 +43,7 @@ namespace PPPredictor.Core.DataType.LeaderBoard
 
         public class HitBloqUser
         {
+            [Newtonsoft.Json.JsonProperty(Required = Newtonsoft.Json.Required.Always)]
             public float cr { get; set; }
             public int rank { get; set; }
             public string username { get; set; }

@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Net.Http;
+using System.Threading.Tasks;
 using static PPPredictor.Core.DataType.Enums;
 
 namespace PPPredictor.Core
@@ -34,25 +35,45 @@ namespace PPPredictor.Core
     {
         internal static async System.Threading.Tasks.Task<T> GetDataAsync<T>(HttpClient client, Leaderboard leaderboard, string callingMethod, string requestUrl) where T : new()
         {
-            try
+            for (int attempt = 0; ; attempt++)
             {
-                HttpResponseMessage response = await client.GetAsync(requestUrl);
-                Logging.DebugNetworkPrint($"{leaderboard}Network: {response.RequestMessage.RequestUri.ToString()}", leaderboard);
-                if (response.IsSuccessStatusCode)
+                bool receivedResponse = false;
+                try
                 {
-                    string result = await response.Content.ReadAsStringAsync();
-                    return JsonConvert.DeserializeObject<T>(result);
+                    using (HttpResponseMessage response = await client.GetAsync(requestUrl))
+                    {
+                        receivedResponse = true;
+                        Logging.DebugNetworkPrint($"{leaderboard}Network: {response.RequestMessage?.RequestUri}", leaderboard);
+                        int status = (int)response.StatusCode;
+                        if (attempt < 2 && (status == 408 || status == 429 || status >= 500))
+                        {
+                            TimeSpan delay = response.Headers.RetryAfter?.Delta
+                                ?? (response.Headers.RetryAfter?.Date - DateTimeOffset.UtcNow)
+                                ?? TimeSpan.FromMilliseconds(250 * (attempt + 1));
+                            // Do not retry earlier than Retry-After or block the calculator for a long rate limit.
+                            if (delay <= TimeSpan.FromSeconds(5))
+                            {
+                                await Task.Delay(delay > TimeSpan.Zero ? delay : TimeSpan.Zero);
+                                continue;
+                            }
+                        }
+                        response.EnsureSuccessStatusCode();
+                        string result = await response.Content.ReadAsStringAsync();
+                        T data = JsonConvert.DeserializeObject<T>(result);
+                        if (data == null) throw new JsonSerializationException("API returned an empty or null response.");
+                        return data;
+                    }
                 }
-                else
+                catch (Exception ex) when (!receivedResponse && attempt < 2 && (ex is HttpRequestException || ex is TaskCanceledException))
                 {
-                    Logging.ErrorPrint($"Error in {leaderboard}Network {callingMethod}: {response?.StatusCode} {response?.ReasonPhrase} for {requestUrl}");
+                    await Task.Delay(250 * (attempt + 1));
+                }
+                catch (Exception ex)
+                {
+                    Logging.ErrorPrint($"Error in {leaderboard}Network {callingMethod}: {ex.Message} for {requestUrl}");
+                    throw;
                 }
             }
-            catch (Exception ex)
-            {
-                Logging.ErrorPrint($"Error in {leaderboard}Network {callingMethod}: {ex.Message} for {requestUrl}");
-            }
-            return new T();
         }
     }
 }

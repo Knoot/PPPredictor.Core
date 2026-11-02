@@ -17,6 +17,15 @@ namespace PPPredictor.Core.DataType.Score
         public double Page { get => page; }
         public double ItemsPerPage { get => itemsPerPage; }
         public double Total { get => total; }
+        public bool IsError { get; private set; }
+
+        internal static PPPScoreCollection Failed() => new PPPScoreCollection { IsError = true };
+
+        private void ValidatePage()
+        {
+            if (page < 1 || itemsPerPage <= 0 || total < 0 || (total > (page - 1) * itemsPerPage && lsPPPScore.Count == 0))
+                throw new System.InvalidOperationException("Invalid or incomplete scores page.");
+        }
 
         public PPPScoreCollection()
         {
@@ -35,6 +44,7 @@ namespace PPPredictor.Core.DataType.Score
             {
                 lsPPPScore.Add(new PPPScore(playerScore));
             }
+            ValidatePage();
         }
 
         public PPPScoreCollection(BeatLeaderPlayerScoreList beatLeaderPlayerScoreList)
@@ -46,6 +56,7 @@ namespace PPPredictor.Core.DataType.Score
             {
                 lsPPPScore.Add(new PPPScore(playerScore));
             }
+            ValidatePage();
         }
 
         public PPPScoreCollection(List<HitBloqScores> lsHitBloqScores, int page)

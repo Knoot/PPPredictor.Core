@@ -222,6 +222,12 @@ namespace PPPredictor.Core
             );
         }
 
+        public bool HasDataRefreshFailed(Leaderboard leaderBoard, string mapPoolId)
+        {
+            var (_, mapPool) = GetCalculatorAndMapPool(leaderBoard, mapPoolId);
+            return mapPool.ScoreRefreshFailed || mapPool.ProfileRefreshFailed;
+        }
+
         public Dictionary<string, LeaderboardData> GetSaveData()
         {
             Dictionary<string, LeaderboardData> dctLeaderboardData = new Dictionary<string, LeaderboardData>();

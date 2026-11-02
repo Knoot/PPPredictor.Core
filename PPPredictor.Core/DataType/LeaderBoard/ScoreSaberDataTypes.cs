@@ -18,6 +18,7 @@ namespace PPPredictor.Core.DataType.LeaderBoard
         public class ScoreSaberPlayer
         {
             public string country { get; set; }
+            [Newtonsoft.Json.JsonProperty(Required = Newtonsoft.Json.Required.Always)]
             public double pp { get; set; }
             public double rank { get; set; }
             public double countryRank { get; set; }

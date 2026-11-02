@@ -73,7 +73,20 @@ namespace PPPredictor.Core.Calculator
 
         internal async Task<(PPPPlayer, PPPPlayer)> UpdatePlayer(PPPMapPool mapPool, bool doResetSession)
         {
-            PPPPlayer player = await GetProfile(mapPool);
+            PPPPlayer player;
+            try
+            {
+                player = await GetProfile(mapPool);
+                if (player == null || player.IsErrorUser || double.IsNaN(player.Pp) || double.IsInfinity(player.Pp) || player.Pp < 0)
+                    throw new InvalidOperationException("Profile fetch did not return a valid player.");
+            }
+            catch (Exception ex)
+            {
+                mapPool.ProfileRefreshFailed = true;
+                Logging.ErrorPrint($"{_leaderboardInfo.LeaderboardName} profile refresh failed; keeping cached profile and session: {ex.Message}");
+                return (mapPool.SessionPlayer, mapPool.CurrentPlayer);
+            }
+            mapPool.ProfileRefreshFailed = false;
             mapPool.CurrentPlayer = player;
             if (doResetSession || mapPool.SessionPlayer == null || NeedsResetSession())
             {
@@ -98,7 +111,7 @@ namespace PPPredictor.Core.Calculator
                 var player = await GetPlayerInfo(longUserId, mapPool); 
                 return player;
             }
-            return new PPPPlayer();
+            return new PPPPlayer(true);
         }
 
         private string GetUserId(PPPMapPool mapPool)
@@ -131,10 +144,12 @@ namespace PPPredictor.Core.Calculator
                     if (_leaderboardInfo.HasGetAllScoresFunctionality && (!_leaderboardInfo.HasGetRecentScoresFunctionality || hasNoScores))
                     {
                         playerscores = await GetAllScores(userId, mapPool);
+                        if (playerscores == null || playerscores.IsError) throw new InvalidOperationException("Score fetch failed.");
                         hasMoreData = false;
                     }
                     else {
                         playerscores = await GetRecentScores(userId, hasNoScores ? largePageSize: pageSize, page, mapPool);
+                        if (playerscores == null || playerscores.IsError) throw new InvalidOperationException("Score page fetch failed.");
                         if (playerscores.Total > 0 && playerscores.ItemsPerPage > 0)
                         {
                             int loadedScores = (int)Math.Min(playerscores.Page * playerscores.ItemsPerPage, playerscores.Total);
@@ -192,10 +207,12 @@ namespace PPPredictor.Core.Calculator
                 RecalculateScoreWeightedSum(mapPool);
                 mapPool.DtLastScoreSet = dtNewLastScoreSet > mapPool.DtLastScoreSet ? dtNewLastScoreSet : mapPool.DtLastScoreSet;
                 mapPool.HasScoreDataFetched = true;
+                mapPool.ScoreRefreshFailed = false;
             }
             catch (Exception ex)
             {
-                Logging.ErrorPrint($"PPPredictor getPlayerScores Error: {ex.Message}");
+                mapPool.ScoreRefreshFailed = true;
+                Logging.ErrorPrint($"PPPredictor getPlayerScores Error; keeping cached scores: {ex.Message}");
             }
         }
 

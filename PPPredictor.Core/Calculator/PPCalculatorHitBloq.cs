@@ -143,7 +143,7 @@ namespace PPPredictor.Core.Calculator
             catch (Exception ex)
             {
                 Logging.ErrorPrint($"PPCalculatorHitBloq GetRecentScores Error: {ex.Message}");
-                return new PPPScoreCollection();
+                return PPPScoreCollection.Failed();
             }
         }
 
@@ -158,7 +158,7 @@ namespace PPPredictor.Core.Calculator
             catch (Exception ex)
             {
                 Logging.ErrorPrint($"PPCalculatorHitBloq GetAllScores Error: {ex.Message}");
-                return new PPPScoreCollection();
+                return PPPScoreCollection.Failed();
             }
         }
 

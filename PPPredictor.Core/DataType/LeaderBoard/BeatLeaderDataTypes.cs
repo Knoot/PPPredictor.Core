@@ -78,6 +78,7 @@ namespace PPPredictor.Core.DataType.LeaderBoard
             public string country { get; set; }
             public float rank { get; set; }
             public float countryRank { get; set; }
+            [Newtonsoft.Json.JsonProperty(Required = Newtonsoft.Json.Required.Always)]
             public float pp { get; set; }
         }
 

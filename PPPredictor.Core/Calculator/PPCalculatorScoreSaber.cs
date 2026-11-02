@@ -50,7 +50,7 @@ namespace PPPredictor.Core.Calculator
             catch (Exception ex)
             {
                 Logging.ErrorPrint($"PPCalculatorScoreSaber GetRecentScores Error: {ex.Message}");
-                return new PPPScoreCollection();
+                return PPPScoreCollection.Failed();
             }
         }
 

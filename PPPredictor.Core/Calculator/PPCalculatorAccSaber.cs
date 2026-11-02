@@ -56,11 +56,11 @@ namespace PPPredictor.Core.Calculator
             {
                 if (mapPool.Id == unsetPoolId) return new PPPPlayer(true);
                 AccSaberPlayer player = await accsaberapi.GetAccSaberUserByPool(userId, mapPool.Id);
+                mapPool.IsPlayerFound = true;
                 return new PPPPlayer(player);
             }
             catch (Exception ex)
             {
-                mapPool.IsPlayerFound = false;
                 Logging.ErrorPrint($"PPCalculatorAccSaber GetPlayerInfo Error: {ex.Message}");
                 return new PPPPlayer(true);
             }
@@ -95,7 +95,7 @@ namespace PPPredictor.Core.Calculator
 
         internal override async Task<PPPScoreCollection> GetAllScores(string userId, PPPMapPool mapPool)
         {
-            if (!IsPlayerFound(mapPool)) return new PPPScoreCollection(); 
+            if (!IsPlayerFound(mapPool)) return PPPScoreCollection.Failed();
             try
             {
                 if (mapPool.Id == unsetPoolId) return new PPPScoreCollection();
@@ -109,10 +109,8 @@ namespace PPPredictor.Core.Calculator
                 {
                     //Special case for overall leaderboard need the scores seperated
                     List<AccSaberScores> lsAccSaberScores = await accsaberapi.GetAllScores(userId);
-                    //Clean old scores for overall function
-                    mapPool.LsScores = new List<ShortScore>();
-                    dctScores.Clear();
-                    dctScoresSum.Clear();
+                    var newScores = new Dictionary<string, List<ShortScore>>();
+                    var newSums = new Dictionary<string, double>();
                     foreach (var group in lsAccSaberScores.GroupBy(x => x.categoryDisplayName))
                     {
                         //I hate to parse it twice...
@@ -123,16 +121,20 @@ namespace PPPredictor.Core.Calculator
                             string searchString = CreateSeachString(pppScore.SongHash, pppScore.GameMode, (int)pppScore.Difficulty1);
                             lsShortScore.Add(new ShortScore(searchString, pppScore.Pp));
                         }
-                        dctScores.Add(group.Key, lsShortScore);
-                        dctScoresSum.Add(group.Key, group.Sum(x => x.weightedAp));
+                        newScores.Add(group.Key, lsShortScore);
+                        newSums.Add(group.Key, group.Sum(x => x.weightedAp));
                     }
-                    return new PPPScoreCollection(lsAccSaberScores, 0);
+                    var result = new PPPScoreCollection(lsAccSaberScores, 0);
+                    mapPool.LsScores = new List<ShortScore>();
+                    dctScores = newScores;
+                    dctScoresSum = newSums;
+                    return result;
                 }
             }
             catch (Exception ex)
             {
                 Logging.ErrorPrint($"PPCalculatorAccSaber GetAllScores Error: {ex.Message}");
-                return new PPPScoreCollection();
+                return PPPScoreCollection.Failed();
             }
         }
 

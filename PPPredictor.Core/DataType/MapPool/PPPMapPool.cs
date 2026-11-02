@@ -74,6 +74,10 @@ namespace PPPredictor.Core.DataType.MapPool
         [JsonIgnore]
         public bool HasScoreDataFetched { get => _hasScoreDataFetched; set => _hasScoreDataFetched = value; }
         [JsonIgnore]
+        public bool ScoreRefreshFailed { get; internal set; }
+        [JsonIgnore]
+        public bool ProfileRefreshFailed { get; internal set; }
+        [JsonIgnore]
         public Dictionary<int, double> DctWeightLookup { get => dctWeightLookup; }
         public string CustomLeaderboardUserId { get => _customLeaderboardUserId; set => _customLeaderboardUserId = value; }
         public Dictionary<string, int> DctScorePositionLookup { get => _dctScorePositionLookup; set => _dctScorePositionLookup = value; }

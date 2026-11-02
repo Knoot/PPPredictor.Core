@@ -111,7 +111,7 @@ namespace PPPredictor.Core.Calculator
             catch (Exception ex)
             {
                 Logging.ErrorPrint($"PPCalculatorBeatLeader GetRecentScores Error: {ex.Message}");
-                return new PPPScoreCollection();
+                return PPPScoreCollection.Failed();
             }
         }
 
