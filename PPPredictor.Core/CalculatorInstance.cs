@@ -23,6 +23,7 @@ namespace PPPredictor.Core
         private int disposed;
         private readonly object lifetimeGate = new object();
         private Task shutdown;
+        private readonly SemaphoreSlim fullSyncGate = new SemaphoreSlim(1, 1);
         public bool IsDisposed => Volatile.Read(ref disposed) != 0;
 
         public CalculatorInstance(Settings settings)
@@ -56,12 +57,15 @@ namespace PPPredictor.Core
         private async Task ShutdownCoreAsync()
         {
             Dispose();
+            await fullSyncGate.WaitAsync().ConfigureAwait(false);
+            fullSyncGate.Release();
             foreach (var calculator in dctCalculator.Values)
             {
                 await calculator.Semaphore.WaitAsync().ConfigureAwait(false);
                 calculator.Semaphore.Release();
             }
             foreach (var calculator in dctCalculator.Values) calculator.Dispose();
+            fullSyncGate.Dispose();
             lifetime.Dispose();
         }
 
@@ -284,24 +288,187 @@ namespace PPPredictor.Core
             );
         }
 
-        public async Task<bool> GetPlayerScores(Leaderboard leaderBoard, string mapPoolId, int pageSize, int largePageSize, bool fetchOnePage = false, Action<int, int> progressChanged = null, PPPScoreSetData expectedScore = null, bool forceFullRefresh = false)
+        public async Task<bool> GetPlayerScores(Leaderboard leaderBoard, string mapPoolId, int pageSize, int largePageSize, bool fetchOnePage = false, Action<int, int> progressChanged = null, PPPScoreSetData expectedScore = null, bool forceFullRefresh = false, bool allowFullRefresh = true)
         {
             (PPCalculator calculator, PPPMapPool mapPool) = GetCalculatorAndMapPool(leaderBoard, mapPoolId);
             return await SemaphoreFunction(calculator.Semaphore,
-                () => Task.Run(() => calculator.GetPlayerScores(mapPool, pageSize, largePageSize, fetchOnePage, progressChanged, expectedScore, forceFullRefresh))
+                () => Task.Run(() => calculator.GetPlayerScores(mapPool, pageSize, largePageSize, fetchOnePage, progressChanged, expectedScore, forceFullRefresh, allowFullRefresh))
             );
         }
 
         public bool HasDataRefreshFailed(Leaderboard leaderBoard, string mapPoolId)
         {
             var (_, mapPool) = GetCalculatorAndMapPool(leaderBoard, mapPoolId);
-            lock (mapPool.DataLock) return mapPool.ScoreRefreshFailed || mapPool.ProfileRefreshFailed;
+            lock (mapPool.DataLock) return mapPool.ScoreRefreshFailed || mapPool.ProfileRefreshFailed
+                || (mapPool.ScoreSync.RetryAfterUtc != DateTime.MinValue && mapPool.ScoreSync.PendingReason != FullScoreSyncReason.None);
         }
 
         public bool RequiresScoreRefresh(Leaderboard leaderBoard, string mapPoolId)
         {
             var (_, pool) = GetCalculatorAndMapPool(leaderBoard, mapPoolId);
             lock (pool.DataLock) return pool.ScoresRequireRefresh;
+        }
+
+        private static bool CanSync(Leaderboard board, string poolId) => board != Leaderboard.NoLeaderboard
+            && !((board == Leaderboard.HitBloq || board == Leaderboard.AccSaber) && poolId == "-1");
+
+        public FullScoreSyncReason GetRequiredFullSync(Leaderboard board, string poolId, bool afterScore = false)
+        {
+            if (!CanSync(board, poolId)) return FullScoreSyncReason.None;
+            var (calculator, pool) = GetCalculatorAndMapPool(board, poolId);
+            lock (pool.DataLock)
+            {
+                pool.ScoreSync.AssignOwner(calculator.GetUserId(pool));
+                if (!pool.HasScoreDataFetched || !pool.ScoreSync.HasCompleteScores || pool.ScoreSync.OwnerId != calculator.GetUserId(pool))
+                {
+                    pool.ScoresRequireRefresh = true;
+                    return FullScoreSyncReason.MissingCache;
+                }
+                if (pool.ScoresRequireRefresh) return FullScoreSyncReason.RatingChanged;
+                return afterScore && !calculator._leaderboardInfo.HasGetRecentScoresFunctionality
+                    ? FullScoreSyncReason.ScoreSubmitted : FullScoreSyncReason.None;
+            }
+        }
+
+        public void RequestFullScoreSync(Leaderboard board, string poolId, FullScoreSyncReason reason)
+        {
+            if (!CanSync(board, poolId)) return;
+            var (calculator, pool) = GetCalculatorAndMapPool(board, poolId);
+            lock (pool.DataLock)
+            {
+                pool.ScoreSync.AssignOwner(calculator.GetUserId(pool));
+                pool.ScoreSync.Request(reason);
+            }
+        }
+
+        public void ScheduleStartupSyncs()
+        {
+            foreach (var entry in dctCalculator)
+                foreach (var pool in entry.Value._dctMapPool.Values)
+                    if (CanSync(entry.Key, pool.Id))
+                        lock (pool.DataLock)
+                        {
+                            pool.ScoreSync.AssignOwner(entry.Value.GetUserId(pool));
+                            pool.ScoreSync.CheckStartup(DateTime.UtcNow, pool.HasScoreDataFetched);
+                        }
+        }
+
+        public List<(Leaderboard Board, string PoolId, FullScoreSyncReason Reason)> GetPendingFullSyncs()
+        {
+            var requests = new List<(Leaderboard, string, FullScoreSyncReason)>();
+            foreach (var entry in dctCalculator)
+                foreach (var pool in entry.Value._dctMapPool.Values)
+                    if (CanSync(entry.Key, pool.Id))
+                        lock (pool.DataLock)
+                            if (pool.ScoreSync.CanRun(DateTime.UtcNow)) requests.Add((entry.Key, pool.Id, pool.ScoreSync.PendingReason));
+            return requests.OrderByDescending(x => x.Item3).ToList();
+        }
+
+        public void RegisterExpectedScore(Leaderboard board, string poolId, PPPScoreSetData score)
+        {
+            if (string.IsNullOrEmpty(score.hash)) return;
+            var (calculator, pool) = GetCalculatorAndMapPool(board, poolId);
+            lock (pool.DataLock)
+            {
+                pool.ScoreSync.AssignOwner(calculator.GetUserId(pool));
+                pool.ScoreSync.ExpectedScores.TryGetValue(score.hash, out var previous);
+                pool.ScoreSync.ExpectedScores[score.hash] = new PPPScoreSetData
+                {
+                    hash = score.hash,
+                    pp = previous?.pp.HasValue == true && (!score.pp.HasValue || previous.pp > score.pp) ? previous.pp : score.pp,
+                    score = previous?.score.HasValue == true && (!score.score.HasValue || previous.score > score.score) ? previous.score : score.score
+                };
+                pool.ScoreSync.ResetMismatch();
+            }
+        }
+
+        public void SuppressMismatchAfterGameplay()
+        {
+            foreach (var calculator in dctCalculator.Values)
+                foreach (var pool in calculator._dctMapPool.Values)
+                    lock (pool.DataLock)
+                    {
+                        pool.ScoreSync.SuppressMismatchUntilUtc = DateTime.UtcNow.AddSeconds(60);
+                        pool.ScoreSync.ResetMismatch();
+                    }
+        }
+
+        public void ObserveScoreRefresh(Leaderboard board, string poolId, bool inMenu)
+        {
+            var (calculator, pool) = GetCalculatorAndMapPool(board, poolId);
+            lock (pool.DataLock)
+                pool.ScoreSync.Observe(DateTime.UtcNow,
+                    inMenu && pool.HasScoreDataFetched && pool.ScoreSync.HasCompleteScores && !pool.ScoreRefreshFailed && !pool.ProfileRefreshFailed
+                        && !pool.ScoresRequireRefresh && pool.ScoreSync.OwnerId == calculator.GetUserId(pool),
+                    calculator.GetComparableTotal(pool), pool.CurrentPlayer.Pp);
+        }
+
+        public List<string> GetDueConfirmationPools(Leaderboard board)
+        {
+            var result = new List<string>();
+            foreach (var pool in GetCalculator(board)._dctMapPool.Values)
+                lock (pool.DataLock)
+                    if (pool.ScoreSync.PendingReason == FullScoreSyncReason.None && pool.ScoreSync.NeedsConfirmation(DateTime.UtcNow)) result.Add(pool.Id);
+            return result;
+        }
+
+        public (PPPPlayer Session, PPPPlayer Current) GetCachedPlayers(Leaderboard board, string poolId)
+        {
+            var (_, pool) = GetCalculatorAndMapPool(board, poolId);
+            lock (pool.DataLock) return (pool.SessionPlayer, pool.CurrentPlayer);
+        }
+
+        public Task<bool> SynchronizeScores(Leaderboard board, string poolId, CancellationToken cancellationToken, Action<int, int> progress = null)
+        {
+            var (calculator, pool) = GetCalculatorAndMapPool(board, poolId);
+            return SemaphoreFunction(fullSyncGate, () => SemaphoreFunction(calculator.Semaphore, () => Task.Run(async () =>
+            {
+                using (var linked = CancellationTokenSource.CreateLinkedTokenSource(lifetimeToken, cancellationToken))
+                {
+                    var previous = NetworkUtil.RequestCancellation;
+                    NetworkUtil.RequestCancellation = linked.Token;
+                    try
+                    {
+                        linked.Token.ThrowIfCancellationRequested();
+                        int attempts;
+                        lock (pool.DataLock)
+                        {
+                            if (!pool.ScoreSync.CanRun(DateTime.UtcNow)) return false;
+                            attempts = pool.ScoreSync.ExpectedScores.Count > 0 ? 3 : 1;
+                        }
+                        for (int attempt = 0; attempt < attempts; attempt++)
+                        {
+                            var player = await calculator.GetProfile(pool);
+                            linked.Token.ThrowIfCancellationRequested();
+                            if (player == null || player.IsErrorUser || double.IsNaN(player.Pp) || double.IsInfinity(player.Pp) || player.Pp < 0)
+                            {
+                                lock (pool.DataLock) pool.ProfileRefreshFailed = true;
+                                break;
+                            }
+                            bool scores = await calculator.GetPlayerScores(pool, calculator._leaderboardInfo.LargePageSize,
+                                calculator._leaderboardInfo.LargePageSize, progressChanged: progress, forceFullRefresh: true,
+                                requireAllExpected: true, onCommitted: () =>
+                                {
+                                    calculator.CommitPlayer(pool, player, false);
+                                    pool.ScoreSync.Complete(DateTime.UtcNow);
+                                });
+                            if (scores) return true;
+                            if (!pool.ScoreSync.LastFetchUnconfirmed) break;
+                            if (attempt + 1 < attempts) await Task.Delay(1500 * (attempt + 1), linked.Token);
+                        }
+                        lock (pool.DataLock) { pool.ScoreSync.Fail(DateTime.UtcNow); pool.ScoreRefreshFailed = true; }
+                        return false;
+                    }
+                    catch (OperationCanceledException) when (linked.IsCancellationRequested) { throw; }
+                    catch (Exception ex)
+                    {
+                        lock (pool.DataLock) pool.ScoreSync.Fail(DateTime.UtcNow);
+                        Logging.ErrorPrint($"Full score sync failed for {board}/{poolId}: {ex.Message}");
+                        return false;
+                    }
+                    finally { NetworkUtil.RequestCancellation = previous; }
+                }
+            })));
         }
 
         public Dictionary<string, LeaderboardData> GetSaveData()

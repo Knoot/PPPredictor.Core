@@ -168,7 +168,8 @@ namespace UnitTests.Data
                 await refresh.WaitAsync(TimeSpan.FromSeconds(5));
                 Assert.AreEqual(0d, (await duringCommit).PpGainWeighted);
                 Assert.AreEqual(pool.LsScores.Count, pool.DctScorePositionLookup.Count);
-                Assert.IsTrue(pool.LsScores.Last().WeightedSum > pool.LsScores.First().Pp);
+                Assert.AreEqual(1, pool.LsScores.Count, "The complete response must remove scores absent from the server snapshot.");
+                Assert.AreEqual(300, pool.LsScores.Last().WeightedSum);
             }
             finally { releaseNetwork.TrySetResult(true); releaseCommit.Set(); await refresh; }
         }

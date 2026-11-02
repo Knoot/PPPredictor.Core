@@ -39,6 +39,7 @@ namespace PPPredictor.Core.DataType.MapPool
 
         public string MapPoolName { get => _mapPoolName; set => _mapPoolName = value; }
         public int BeatLeaderPPVersion { get; set; }
+        public ScoreSyncState ScoreSync { get; set; } = new ScoreSyncState();
         public float AccumulationConstant { get => _accumulationConstant; set => _accumulationConstant = value; }
         public int SortIndex { get => _sortIndex; set => _sortIndex = value; }
         public List<ShortScore> LsScores

@@ -35,8 +35,9 @@ namespace PPPredictor.Core.Calculator
             }
             foreach (var pool in _dctMapPool.Values)
             {
+                pool.ScoreSync = pool.ScoreSync ?? new ScoreSyncState();
                 RecalculateScoreWeightedSum(pool);
-                if (pool.LsScores != null && pool.LsScores.Count > 0)
+                if (pool.ScoreSync.HasCompleteScores || (pool.LsScores != null && pool.LsScores.Count > 0))
                 {
                     pool.HasScoreDataFetched = true;
                 }
@@ -93,13 +94,20 @@ namespace PPPredictor.Core.Calculator
                 lock (mapPool.DataLock)
                 {
                     mapPool.ProfileRefreshFailed = true;
+                    mapPool.ScoreSync.ResetMismatch();
                     Logging.ErrorPrint($"{_leaderboardInfo.LeaderboardName} profile refresh failed; keeping cached profile and session: {ex.Message}");
                     return (mapPool.SessionPlayer, mapPool.CurrentPlayer);
                 }
             }
+            return CommitPlayer(mapPool, player, doResetSession);
+        }
+
+        internal (PPPPlayer, PPPPlayer) CommitPlayer(PPPMapPool mapPool, PPPPlayer player, bool doResetSession)
+        {
             lock (mapPool.DataLock)
             {
                 mapPool.ProfileRefreshFailed = false;
+                mapPool.ScoreSync.ProfileRevision++;
                 if (mapPool.CurrentPlayer.Pp != player.Pp || mapPool.CurrentPlayer.Rank != player.Rank
                     || mapPool.CurrentPlayer.CountryRank != player.CountryRank || mapPool.CurrentPlayer.Country != player.Country)
                     mapPool.PlayerRankingsFetchedAtUtc = DateTime.MinValue;
@@ -131,7 +139,7 @@ namespace PPPredictor.Core.Calculator
             return new PPPPlayer(true);
         }
 
-        private string GetUserId(PPPMapPool mapPool)
+        internal string GetUserId(PPPMapPool mapPool)
         {
             if (!string.IsNullOrEmpty(mapPool.CustomLeaderboardUserId))
             {
@@ -143,132 +151,128 @@ namespace PPPredictor.Core.Calculator
             }
         }
 
-        internal async Task<bool> GetPlayerScores(PPPMapPool mapPool, int pageSize, int largePageSize, bool fetchOnePage = false, Action<int, int> progressChanged = null, PPPScoreSetData expectedScore = null, bool forceFullRefresh = false)
+        internal async Task<bool> GetPlayerScores(PPPMapPool mapPool, int pageSize, int largePageSize, bool fetchOnePage = false, Action<int, int> progressChanged = null, PPPScoreSetData expectedScore = null, bool forceFullRefresh = false, bool allowFullRefresh = true,
+            bool requireAllExpected = false, Action onCommitted = null)
         {
             try
             {
                 string userId = GetUserId(mapPool);
-                Dictionary<string, ShortScore> cachedScores;
+                Dictionary<string, ShortScore> cached;
+                Dictionary<string, PPPScoreSetData> expected;
                 DateTimeOffset lastScoreSet;
-                bool hasCompleteCache;
+                bool hadCache;
                 lock (mapPool.DataLock)
                 {
-                    forceFullRefresh |= mapPool.ScoresRequireRefresh;
-                    cachedScores = (mapPool.LsScores ?? new List<ShortScore>()).GroupBy(x => x.Searchstring)
-                        .ToDictionary(x => x.Key, x => new ShortScore(x.Key, x.Max(s => s.Pp)));
+                    mapPool.ScoreSync.LastFetchUnconfirmed = false;
+                    hadCache = mapPool.HasScoreDataFetched;
+                    forceFullRefresh |= mapPool.ScoresRequireRefresh || !hadCache;
+                    forceFullRefresh |= !string.IsNullOrEmpty(mapPool.ScoreSync.OwnerId) && mapPool.ScoreSync.OwnerId != userId;
+                    if (!allowFullRefresh && (forceFullRefresh || !_leaderboardInfo.HasGetRecentScoresFunctionality)) return false;
+                    cached = (mapPool.LsScores ?? new List<ShortScore>()).GroupBy(x => x.Searchstring)
+                        .ToDictionary(x => x.Key, x => new ShortScore(x.Key, x.Max(score => score.Pp)));
+                    expected = new Dictionary<string, PPPScoreSetData>(mapPool.ScoreSync.ExpectedScores, StringComparer.OrdinalIgnoreCase);
                     lastScoreSet = mapPool.DtLastScoreSet;
-                    hasCompleteCache = mapPool.HasScoreDataFetched && !forceFullRefresh;
                 }
-                bool hasNoScores = cachedScores.Count == 0 || forceFullRefresh;
-                bool expectedScoreFound = expectedScore == null;
-                bool fetchedAllScores = false;
-                bool hasMoreData = true;
+                bool useAll = _leaderboardInfo.HasGetAllScoresFunctionality
+                    && (!_leaderboardInfo.HasGetRecentScoresFunctionality || cached.Count == 0 || forceFullRefresh);
+                bool confirmed = expectedScore == null;
+                bool complete = false, more = true;
                 int page = 1;
-                List<ShortScore> lsNewScores = new List<ShortScore>();
-                DateTimeOffset dtNewLastScoreSet = new DateTime(2000, 1, 1);
-                while (hasMoreData)
+                var fetched = new Dictionary<string, ShortScore>();
+                var confirmedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                DateTimeOffset newest = new DateTime(2000, 1, 1);
+                while (more)
                 {
                     NetworkUtil.RequestCancellation.ThrowIfCancellationRequested();
-                    PPPScoreCollection playerscores = null;
-                    if (_leaderboardInfo.HasGetAllScoresFunctionality && (!_leaderboardInfo.HasGetRecentScoresFunctionality || hasNoScores))
-                    {
-                        playerscores = await GetAllScores(userId, mapPool);
-                        NetworkUtil.RequestCancellation.ThrowIfCancellationRequested();
-                        if (playerscores == null || playerscores.IsError) throw new InvalidOperationException("Score fetch failed.");
-                        hasMoreData = false;
-                    }
-                    else
-                    {
-                        playerscores = await GetRecentScores(userId, hasNoScores ? largePageSize : pageSize, page, mapPool);
-                        NetworkUtil.RequestCancellation.ThrowIfCancellationRequested();
-                        if (playerscores == null || playerscores.IsError) throw new InvalidOperationException("Score page fetch failed.");
-                        if (playerscores.Page != page) throw new InvalidOperationException("API returned an unexpected scores page.");
-                        if (playerscores.Total > 0 && playerscores.ItemsPerPage > 0)
-                        {
-                            int loadedScores = (int)Math.Min(playerscores.Page * playerscores.ItemsPerPage, playerscores.Total);
-                            progressChanged?.Invoke(loadedScores, (int)playerscores.Total);
-                        }
-                        if (playerscores.Page * playerscores.ItemsPerPage >= playerscores.Total || (fetchOnePage && hasCompleteCache && expectedScore == null))
-                        {
-                            hasMoreData = false;
-                        }
-                    }
+                    var scores = useAll ? await GetAllScores(userId, mapPool)
+                        : await GetRecentScores(userId, forceFullRefresh || cached.Count == 0 ? largePageSize : pageSize, page, mapPool);
                     NetworkUtil.RequestCancellation.ThrowIfCancellationRequested();
-                    fetchedAllScores = forceFullRefresh || (_leaderboardInfo.HasGetAllScoresFunctionality && (!_leaderboardInfo.HasGetRecentScoresFunctionality || hasNoScores));
-                    foreach (PPPScore scores in playerscores.LsPPPScore)
+                    if (scores == null || scores.IsError) throw new InvalidOperationException("Score fetch failed.");
+                    if (!useAll && scores.Page != page) throw new InvalidOperationException("API returned an unexpected scores page.");
+                    complete = useAll || scores.Page * scores.ItemsPerPage >= scores.Total;
+                    more = !complete;
+                    if (!useAll && scores.Total > 0 && scores.ItemsPerPage > 0)
+                        progressChanged?.Invoke((int)Math.Min(scores.Page * scores.ItemsPerPage, scores.Total), (int)scores.Total);
+                    foreach (PPPScore score in scores.LsPPPScore)
                     {
-                        string searchString = CreateSeachString(scores.SongHash, scores.GameMode, (int)scores.Difficulty1);
-                        cachedScores.TryGetValue(searchString, out ShortScore previousScore);
-                        if (expectedScore != null && string.Equals(searchString, expectedScore.hash, StringComparison.OrdinalIgnoreCase)
-                            && (!expectedScore.pp.HasValue || scores.Pp >= expectedScore.pp.Value - 0.001)
-                            && (!expectedScore.score.HasValue || scores.ScoreValue >= expectedScore.score.Value))
-                            expectedScoreFound = true;
-                        ShortScore newScore = new ShortScore(searchString, scores.Pp);
-                        if (newScore.Pp > 0) // Do not cache unranked scores
-                        {
-                            if (previousScore == null)
-                            {
-                                lsNewScores.Add(newScore);
-                            }
-                            else
-                            {
-                                if (!fetchedAllScores && lastScoreSet >= scores.TimeSet && (expectedScore == null || expectedScoreFound))
-                                {
-                                    hasMoreData = false;
-                                }
-                                else if (fetchedAllScores || newScore.Pp > previousScore.Pp)
-                                {
-                                    lsNewScores.Add(newScore);
-                                }
-                            }
-                        }
-                        dtNewLastScoreSet = scores.TimeSet > dtNewLastScoreSet ? scores.TimeSet : dtNewLastScoreSet;
+                        if (double.IsNaN(score.Pp) || double.IsInfinity(score.Pp) || score.Pp < 0)
+                            throw new InvalidOperationException("API returned invalid score PP.");
+                        string key = CreateSeachString(score.SongHash, score.GameMode, (int)score.Difficulty1);
+                        if (fetched.TryGetValue(key, out var duplicate) && duplicate.Pp != score.Pp && !useAll)
+                            throw new InvalidOperationException("Score changed between pages; refusing an inconsistent snapshot.");
+                        fetched[key] = new ShortScore(key, duplicate == null ? score.Pp : Math.Max(duplicate.Pp, score.Pp));
+                        if (MatchesExpected(key, score, expectedScore)) confirmed = true;
+                        if (expected.TryGetValue(key, out var pending) && MatchesExpected(key, score, pending)) confirmedKeys.Add(key);
+                        // The timestamp stops pagination, not application of authoritative values already returned.
+                        if (!forceFullRefresh && !useAll && cached.ContainsKey(key) && lastScoreSet >= score.TimeSet
+                            && (expectedScore == null || confirmed)) more = false;
+                        if (score.TimeSet > newest) newest = score.TimeSet;
                     }
-                    if (expectedScore != null && hasCompleteCache && expectedScoreFound) hasMoreData = false;
-                    if (expectedScore != null && hasCompleteCache && page >= 3) hasMoreData = false;
+                    if (!forceFullRefresh && !useAll && hadCache)
+                    {
+                        if (fetchOnePage && expectedScore == null) more = false;
+                        if (expectedScore != null && (confirmed || page >= 3)) more = false;
+                    }
                     page++;
                     await Task.Delay(_leaderboardInfo.TaskDelayValue, NetworkUtil.RequestCancellation);
                 }
                 NetworkUtil.RequestCancellation.ThrowIfCancellationRequested();
-                // Publish scores, lookup indices and weighted sums together; never hold this lock during HTTP requests.
                 lock (mapPool.DataLock)
                 {
-                    if (mapPool.LsScores == null || forceFullRefresh || (fetchedAllScores && ReplaceScoresOnFullFetch(mapPool)))
-                        mapPool.LsScores = new List<ShortScore>();
-                    foreach (ShortScore newScore in lsNewScores
-                        .GroupBy(x => x.Searchstring)
-                        .Select(x => x.OrderByDescending(score => score.Pp).First()))
+                    NetworkUtil.RequestCancellation.ThrowIfCancellationRequested();
+                    if (requireAllExpected && mapPool.ScoreSync.ExpectedScores.Any(x => !confirmedKeys.Contains(x.Key)
+                        || !expected.TryGetValue(x.Key, out var captured) || !ReferenceEquals(x.Value, captured)))
                     {
-                        ShortScore previousScore = mapPool.LsScores.Find(x => x.Searchstring == newScore.Searchstring);
-                        if (previousScore == null)
-                        {
-                            mapPool.LsScores.Add(newScore);
-                        }
-                        else if (newScore.Pp > previousScore.Pp)
-                        {
-                            previousScore.Pp = newScore.Pp;
-                        }
+                        mapPool.ScoreSync.LastFetchUnconfirmed = true;
+                        return false;
                     }
-                    ;
+                    if (complete || mapPool.LsScores == null) mapPool.LsScores = new List<ShortScore>();
+                    foreach (var score in fetched.Values)
+                    {
+                        var previous = mapPool.LsScores.Find(x => x.Searchstring == score.Searchstring);
+                        if (score.Pp == 0) { if (previous != null) mapPool.LsScores.Remove(previous); }
+                        else if (previous == null) mapPool.LsScores.Add(score);
+                        else previous.Pp = score.Pp;
+                    }
                     RecalculateScoreWeightedSum(mapPool);
-                    mapPool.DtLastScoreSet = dtNewLastScoreSet > mapPool.DtLastScoreSet ? dtNewLastScoreSet : mapPool.DtLastScoreSet;
-                    mapPool.HasScoreDataFetched = true;
-                    mapPool.ScoreRefreshFailed = !expectedScoreFound;
-                    if (fetchedAllScores) mapPool.ScoresRequireRefresh = false;
+                    mapPool.DtLastScoreSet = complete ? newest : (newest > lastScoreSet ? newest : lastScoreSet);
+                    mapPool.HasScoreDataFetched = hadCache || complete;
+                    mapPool.ScoreRefreshFailed = !confirmed;
+                    mapPool.ScoreSync.HasCompleteScores |= complete;
+                    mapPool.ScoreSync.OwnerId = userId;
+                    mapPool.ScoreSync.LastFetchWasComplete = complete;
+                    mapPool.ScoreSync.ScoreRevision++;
+                    if (complete) mapPool.ScoresRequireRefresh = false;
+                    foreach (var key in confirmedKeys)
+                        if (mapPool.ScoreSync.ExpectedScores.TryGetValue(key, out var current) && ReferenceEquals(current, expected[key]))
+                            mapPool.ScoreSync.ExpectedScores.Remove(key);
                     OnScoresCommitted(mapPool);
+                    onCommitted?.Invoke();
                 }
-                return expectedScoreFound;
+                return confirmed;
             }
             catch (OperationCanceledException) when (NetworkUtil.RequestCancellation.IsCancellationRequested) { throw; }
             catch (Exception ex)
             {
-                lock (mapPool.DataLock) mapPool.ScoreRefreshFailed = true;
+                lock (mapPool.DataLock) { mapPool.ScoreRefreshFailed = true; mapPool.ScoreSync.ResetMismatch(); }
                 Logging.ErrorPrint($"PPPredictor getPlayerScores Error; keeping cached scores: {ex.Message}");
                 return false;
             }
         }
 
-        protected virtual bool ReplaceScoresOnFullFetch(PPPMapPool mapPool) => false;
+        private static bool MatchesExpected(string key, PPPScore score, PPPScoreSetData expected) => expected != null
+            && string.Equals(key, expected.hash, StringComparison.OrdinalIgnoreCase)
+            && (!expected.pp.HasValue || score.Pp >= expected.pp.Value - 0.001)
+            && (!expected.score.HasValue || score.ScoreValue >= expected.score.Value);
+
+        internal virtual double? GetComparableTotal(PPPMapPool pool)
+        {
+            bool comparable = _leaderboardInfo.Leaderboard == Leaderboard.ScoreSaber
+                || (_leaderboardInfo.Leaderboard == Leaderboard.BeatLeader && pool.MapPoolType == MapPoolType.Default
+                    && pool.LeaderboardContext == LeaderboardContext.BeatLeaderDefault && pool.BeatLeaderPPVersion == 4);
+            return comparable ? (double?)(pool.LsScores.LastOrDefault()?.WeightedSum ?? 0) : null;
+        }
+
         protected virtual void OnScoresCommitted(PPPMapPool mapPool) { }
 
         protected void MarkRatingChange(string searchString, PPPStarRating previous, PPPStarRating current, bool categoryChanged = false)

@@ -168,14 +168,14 @@ namespace UnitTests.Data
         private static Settings Settings() => new Settings(true, false, false, false, "123", PPGainCalculationType.Weighted,
             MapPoolSorting.Alphabetical, "", -7, DateTime.Now.AddHours(-1), 12);
 
-        private static PPPScoreCollection Page(int page, int total, string? hash = null) => new PPPScoreCollection(new ScoreSaberPlayerScoreList
+        private static PPPScoreCollection Page(int page, int total, string? hash = null, double pp = 100) => new PPPScoreCollection(new ScoreSaberPlayerScoreList
         {
             metadata = new ScoreSaberScoreListMetadata { page = page, itemsPerPage = 1, total = total },
             playerScores = hash == null ? new List<ScoreSaberPlayerScore>() : new List<ScoreSaberPlayerScore>
             {
                 new ScoreSaberPlayerScore
                 {
-                    score = new ScoreSaberScore { pp = 100, timeSet = DateTimeOffset.UtcNow },
+                    score = new ScoreSaberScore { pp = pp, timeSet = DateTimeOffset.UtcNow },
                     leaderboard = new ScoreSaberLeaderboardInfo
                     {
                         songHash = hash,
@@ -210,7 +210,7 @@ namespace UnitTests.Data
 
             calculator.Fetch = page => Page(page, 2, "NEW" + page);
             await calculator.GetPlayerScores(pool, 1, 1);
-            Assert.AreEqual(hasCache ? 3 : 2, pool.LsScores.Count);
+            Assert.AreEqual(2, pool.LsScores.Count, "A successful complete response replaces old scores, including deletions.");
             Assert.IsTrue(pool.HasScoreDataFetched);
             Assert.IsFalse(pool.ScoreRefreshFailed);
         }
@@ -224,6 +224,22 @@ namespace UnitTests.Data
             Assert.IsTrue(pool.HasScoreDataFetched);
             Assert.IsFalse(pool.ScoreRefreshFailed);
             Assert.AreEqual(0, pool.LsScores.Count);
+        }
+
+        [DataTestMethod]
+        [DataRow(100d)]
+        [DataRow(0d)]
+        public async Task IncrementalFetchAppliesDecreasesAndUnrankingDespiteTimestampCutoff(double pp)
+        {
+            var pool = new PPPMapPool { DtLastScoreSet = DateTimeOffset.UtcNow.AddDays(1) };
+            pool.LsScores.Add(new ShortScore("OLD_SOLOSTANDARD_9", 200));
+            pool.LsScores.Add(new ShortScore("KEEP_SOLOSTANDARD_9", 50));
+            var calculator = new Calculator(pool, Settings()) { Fetch = _ => Page(1, 10, "OLD", pp) };
+            Assert.IsTrue(await calculator.GetPlayerScores(pool, 1, 1));
+            Assert.IsTrue(pool.LsScores.Any(x => x.Searchstring == "KEEP_SOLOSTANDARD_9"));
+            Assert.AreEqual(pp > 0 ? 2 : 1, pool.LsScores.Count);
+            if (pp > 0) Assert.AreEqual(pp, pool.LsScores.Single(x => x.Searchstring == "OLD_SOLOSTANDARD_9").Pp);
+            Assert.IsFalse(pool.ScoreSync.LastFetchWasComplete);
         }
 
         [TestMethod]

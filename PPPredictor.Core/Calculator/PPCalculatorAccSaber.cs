@@ -165,7 +165,12 @@ namespace PPPredictor.Core.Calculator
             }
         }
 
-        protected override bool ReplaceScoresOnFullFetch(PPPMapPool mapPool) => mapPool.Id != unsetPoolId;
+        internal override double? GetComparableTotal(PPPMapPool pool)
+        {
+            if (pool.Id == unsetPoolId) return null;
+            if (pool.MapPoolType != MapPoolType.Default) return pool.LsScores.LastOrDefault()?.WeightedSum ?? 0;
+            return overallScoresLoaded ? (double?)categoryScores.Values.Sum(x => x.LsScores.LastOrDefault()?.WeightedSum ?? 0) : null;
+        }
 
         protected override void OnScoresCommitted(PPPMapPool mapPool)
         {
