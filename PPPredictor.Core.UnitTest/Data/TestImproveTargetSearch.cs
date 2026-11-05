@@ -30,24 +30,26 @@ namespace UnitTests.Data
         }
 
         [DataTestMethod]
-        [DataRow("TARGET")]
-        [DataRow("NEW")]
-        public void RawTargetReachesOneAgainstIndependentWeightedSum(string map)
+        [DataRow("TARGET", 1d)]
+        [DataRow("NEW", 1d)]
+        [DataRow("TARGET", 10d)]
+        [DataRow("NEW", 10d)]
+        public void RawTargetReachesSelectedGainAgainstIndependentWeightedSum(string map, double weightedTarget)
         {
             var pool = new PPPMapPool { AccumulationConstant = 0.965f, CurrentPlayer = new PPPPlayer { Pp = 1000 } };
             pool.LsScores.AddRange(new[] { new ShortScore("TOP", 300), new ShortScore("TARGET", 250), new ShortScore("LOW", 200) });
             var calculator = Calculator(pool);
             double Gain(double raw) => calculator.GetPlayerScorePPGain(map, raw, pool).PpGainWeighted;
-            var target = ImproveTargetSearch.FindRawPP(Gain, 1, 1000);
+            var target = ImproveTargetSearch.FindRawPP(Gain, weightedTarget, 1000);
             Assert.IsNotNull(target);
             double Total(IEnumerable<double> scores) => scores.OrderByDescending(x => x)
                 .Select((pp, index) => pp * Math.Pow(pool.AccumulationConstant, index)).Sum();
             double independent = Total(pool.LsScores.Where(x => x.Searchstring != map).Select(x => x.Pp).Append(target.Value))
                 - Total(pool.LsScores.Select(x => x.Pp));
-            Assert.AreEqual(1, independent, 1e-8);
-            Assert.IsTrue(Gain(target.Value) >= 1);
-            Assert.IsTrue(Gain(target.Value - 0.000001) < 1);
-            Assert.IsTrue(Gain(target.Value - 0.001) > 0.99);
+            Assert.AreEqual(weightedTarget, independent, 1e-8);
+            Assert.IsTrue(Gain(target.Value) >= weightedTarget);
+            Assert.IsTrue(Gain(target.Value - 0.000001) < weightedTarget);
+            Assert.IsTrue(Gain(target.Value - 0.001) > weightedTarget - 0.01);
         }
 
         [TestMethod]
