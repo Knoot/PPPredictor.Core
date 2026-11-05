@@ -112,7 +112,17 @@ namespace PPPredictor.Core.Calculator
                     || mapPool.CurrentPlayer.CountryRank != player.CountryRank || mapPool.CurrentPlayer.Country != player.Country)
                     mapPool.PlayerRankingsFetchedAtUtc = DateTime.MinValue;
                 mapPool.CurrentPlayer = player;
-                if (doResetSession || mapPool.SessionPlayer == null || NeedsResetSession())
+                if (_leaderboardInfo.Leaderboard == Leaderboard.BeatLeader && mapPool.BeatLeaderSessionRebasePending)
+                {
+                    // A formula migration rebases only BeatLeader after the complete snapshot, not other boards' sessions.
+                    if (!mapPool.ScoresRequireRefresh)
+                    {
+                        mapPool.SessionPlayer = player;
+                        mapPool.BeatLeaderSessionRebasePending = false;
+                        Logging.InfoPrint("BeatLeader PPv4.2: session baseline rebased to the refreshed profile after full score synchronization.");
+                    }
+                }
+                else if (doResetSession || mapPool.SessionPlayer == null || NeedsResetSession())
                 {
                     _settings.LastSessionReset = DateTime.Now;
                     mapPool.SessionPlayer = player;
@@ -269,7 +279,8 @@ namespace PPPredictor.Core.Calculator
         {
             bool comparable = _leaderboardInfo.Leaderboard == Leaderboard.ScoreSaber
                 || (_leaderboardInfo.Leaderboard == Leaderboard.BeatLeader && pool.MapPoolType == MapPoolType.Default
-                    && pool.LeaderboardContext == LeaderboardContext.BeatLeaderDefault && pool.BeatLeaderPPVersion == 4);
+                    && pool.LeaderboardContext == LeaderboardContext.BeatLeaderDefault && pool.BeatLeaderPPVersion == 4
+                    && pool.BeatLeaderFormulaRevision == DataType.Curve.BeatLeaderV4Curve.FormulaRevision);
             return comparable ? (double?)(pool.LsScores.LastOrDefault()?.WeightedSum ?? 0) : null;
         }
 

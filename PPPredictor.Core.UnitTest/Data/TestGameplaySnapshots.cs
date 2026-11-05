@@ -44,6 +44,8 @@ namespace UnitTests.Data
                     { serializedName = "Standard", difficulty = BeatMapDifficulty.ExpertPlus }), new PPPStarRating(10)
                     {
                         RankedBeatLeader = leaderboard == Leaderboard.BeatLeader ? true : null,
+                        // PPv4.2 stars for these BL ratings, independently calculated by pinned upstream JS.
+                        Stars = leaderboard == Leaderboard.BeatLeader ? 9.610805103965863 : 10,
                         PredictedAcc = 0.975, Notes = 500, NoteSpan = 120,
                         ModifierValues = new() { ["nf"] = -0.5 }, ModifiersRating = new() { ["test"] = 1 }
                     })
@@ -76,7 +78,7 @@ namespace UnitTests.Data
                 Assert.AreEqual(-0.5, normal.BaseStarRating.ModifierValues["nf"]);
                 Assert.AreEqual(1, source.BaseStarRating.ModifiersRating["test"]);
                 Assert.AreEqual(BeatMapDifficulty.ExpertPlus, normal.BeatmapKey.difficulty);
-                Assert.AreEqual(10, source.ModifiedStarRating.Stars);
+                Assert.AreEqual(leaderboard == Leaderboard.BeatLeader ? 9.610805103965863 : 10, source.ModifiedStarRating.Stars);
             }
             finally { await calculator.ShutdownAsync(); }
         }

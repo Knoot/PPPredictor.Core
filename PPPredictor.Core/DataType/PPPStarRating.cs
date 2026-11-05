@@ -25,6 +25,7 @@ namespace PPPredictor.Core.DataType
         public double SliderPercentage { get; set; }
         public int Notes { get; set; }
         public double? NoteSpan { get; set; }
+        public int? BeatLeaderServerPPVersion { get; set; }
         [DefaultValue(0d)]
         public double PassRating { get => _passRating; set => _passRating = value; }
         [DefaultValue(0d)] 
@@ -59,9 +60,11 @@ namespace PPPredictor.Core.DataType
                 _rankedBeatLeader = beatLeaderDifficulty.status == (int)Enums.BeatLeaderDifficultyStatus.ranked;
             }
             _predictedAcc = beatLeaderDifficulty.predictedAcc.GetValueOrDefault();
+            _stars = beatLeaderDifficulty.stars.GetValueOrDefault();
             SliderPercentage = beatLeaderDifficulty.sliderPercentage.GetValueOrDefault();
             Notes = beatLeaderDifficulty.notes;
             NoteSpan = beatLeaderDifficulty.noteSpan;
+            BeatLeaderServerPPVersion = beatLeaderDifficulty.ppVersion;
             _passRating = beatLeaderDifficulty.passRating.GetValueOrDefault();
             _accRating = beatLeaderDifficulty.accRating.GetValueOrDefault();
             _techRating = beatLeaderDifficulty.techRating.GetValueOrDefault();
@@ -92,7 +95,7 @@ namespace PPPredictor.Core.DataType
             return other != null && IsRanked() == other.IsRanked() && Stars == other.Stars
                 && PredictedAcc == other.PredictedAcc && AccRating == other.AccRating && PassRating == other.PassRating
                 && TechRating == other.TechRating && SliderPercentage == other.SliderPercentage
-                && Notes == other.Notes && NoteSpan == other.NoteSpan
+                && Notes == other.Notes && NoteSpan == other.NoteSpan && BeatLeaderServerPPVersion == other.BeatLeaderServerPPVersion
                 && SameValues(ModifiersRating, other.ModifiersRating) && SameValues(ModifierValues, other.ModifierValues);
         }
 

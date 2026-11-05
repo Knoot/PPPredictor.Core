@@ -4,18 +4,19 @@ using System.Linq;
 
 namespace PPPredictor.Core.DataType.Curve
 {
-    // Port of BeatLeader/beatleader-website src/utils/beatleader/rebalanced-pp.js.
+    // PPv4.2: beatleader-website 38b04d3c39570c1dcca6a9fca5cafbdf33ca5e49, rebalanced-pp.js.
     internal sealed class BeatLeaderV4Curve
     {
+        internal const int FormulaRevision = 42;
         private static readonly (double X, double Y)[] BaseTable = {
-            (0, 0), (0.6, 0.307), (0.65, 0.355), (0.7, 0.414), (0.75, 0.485),
-            (0.8, 0.568), (0.825, 0.605), (0.85, 0.649), (0.875, 0.699),
-            (0.9, 0.753), (0.91, 0.781), (0.92, 0.813), (0.93, 0.867),
-            (0.94, 0.931), (0.95, 1), (0.955, 1.039), (0.96, 1.094),
+            (0, 0), (0.6, 0.297), (0.65, 0.343), (0.7, 0.4), (0.75, 0.469),
+            (0.8, 0.549), (0.825, 0.584), (0.85, 0.627), (0.875, 0.675),
+            (0.9, 0.727), (0.91, 0.76), (0.92, 0.804), (0.93, 0.861),
+            (0.94, 0.926), (0.95, 1), (0.955, 1.039), (0.96, 1.094),
             (0.965, 1.167), (0.97, 1.256), (0.9725, 1.315), (0.975, 1.392),
             (0.9775, 1.49), (0.98, 1.618), (0.9825, 1.786), (0.985, 2.007),
             (0.9875, 2.303), (0.99, 2.7), (0.9925, 3.241), (0.995, 4.01),
-            (0.9975, 5.158), (0.999, 6.241), (1, 7.424)
+            (0.9975, 5.158), (0.999, 6.241), (1, 7.2)
         };
         private static readonly double[] Slopes = BuildSlopes();
         private static readonly double[][] Settings = {
@@ -23,23 +24,27 @@ namespace PPPredictor.Core.DataType.Curve
             new[] { 0.96, 0.99, -3.0, 4.3, 0.66, 4.8, 1.85 },
             new[] { 0.965, 0.988, -2.4, 4.5, 0.64, 4.5, 1.95 },
             new[] { 0.97, 0.986, -2.2, 4.7, 0.62, 4.2, 2.05 },
-            new[] { 0.975, 0.985, -1.8, 4.86, 0.6, 3.8, 2.15 },
-            new[] { 0.98, 0.985, -1.4, 4.86, 0.6, 3.35, 2.3 },
-            new[] { 0.985, 0.985, -1.2, 4.86, 0.6, 2.88, 2.46 },
-            new[] { 0.99, 0.9915, -1.2, 4.86, 0.6, 2.88, 2.46 },
-            new[] { 0.995, 0.9915, -1.2, 4.86, 0.6, 2.88, 2.46 }
+            new[] { 0.975, 0.983, 0.0, 4.86, 0.6, 3.8, 2.15 },
+            new[] { 0.98, 0.983, 0.0, 4.86, 0.6, 3.35, 2.3 },
+            new[] { 0.985, 0.985, -0.6, 4.86, 0.6, 2.88, 2.46 },
+            new[] { 0.99, 0.99, 0.0, 4.86, 0.6, 2.88, 2.46 },
+            new[] { 0.995, 0.99, 0.0, 4.86, 0.6, 2.88, 2.46 }
         };
         private readonly (double X, double Y)[] points;
         private readonly double stars;
 
+        // Sanity check for stale/mixed ratings, not a replacement for a server version contract.
+        internal bool MatchesReportedStars(double reported) => !(reported > 0) || Math.Abs(stars - reported) <= 0.01;
+
         internal BeatLeaderV4Curve(PPPStarRating rating)
         {
             points = BuildCurve(rating);
-            double at96 = PassPP(rating.PassRating) + AccPP(Value(0.96), rating.AccRating) + TechPP(0.96, rating.TechRating);
+            double at96 = PassPP(rating.PassRating) * PassAccMultiplier(0.96, rating.PredictedAcc)
+                + AccPP(Value(0.96), rating.AccRating) + TechPP(rating.TechRating);
             stars = StarsWithoutBonus(at96);
-            if (at96 > 0 && stars < 8.6454)
+            if (at96 > 0 && stars < 8.8584)
             {
-                double lo = stars, hi = 8.6454;
+                double lo = stars, hi = 8.8584;
                 while (hi - lo > 1e-6)
                 {
                     double mid = (lo + hi) / 2;
@@ -56,8 +61,10 @@ namespace PPPredictor.Core.DataType.Curve
             double multiplier = rating.Multiplier;
             double value = Value(accuracy), at96 = Value(0.96), power = CurvePower(stars);
             if (power != 1 && value > 0 && at96 > 0) value = at96 * Math.Pow(value / at96, power);
-            double acc = golf ? accuracy * rating.AccRating * multiplier * 42 : AccPP(value, rating.AccRating * multiplier);
-            double total = 1.023 * (PassPP(rating.PassRating * multiplier) + acc + TechPP(accuracy, rating.TechRating * multiplier)) * LowStarMultiplier(stars);
+            double acc = golf ? accuracy * rating.AccRating * multiplier * 38 : AccPP(value, rating.AccRating * multiplier);
+            acc *= MidStarTopMultiplier(stars, accuracy, rating.PredictedAcc);
+            double pass = PassPP(rating.PassRating * multiplier) * PassAccMultiplier(accuracy, rating.PredictedAcc);
+            double total = 1.0128 * (pass + acc + TechPP(rating.TechRating * multiplier)) * LowStarMultiplier(stars);
             return double.IsNaN(total) || double.IsInfinity(total) ? 0 : total;
         }
 
@@ -68,24 +75,41 @@ namespace PPPredictor.Core.DataType.Curve
             return double.IsNaN(value) || double.IsInfinity(value) || value < 0 ? 0 : value;
         }
 
-        private static double AccPP(double value, double rating) => rating > 0 ? value * 21.584 * Math.Pow(rating, 1.2163) : 0;
+        private static double AccPP(double value, double rating) => rating > 0 ? value * 34.519 * rating : 0;
 
-        private static double TechPP(double accuracy, double rating)
+        private static double TechPP(double rating)
         {
             if (!(rating > 0)) return 0;
-            if (rating > 12) rating = 12 + (rating - 12) * 0.33;
-            return Math.Exp(3.5 * accuracy) * 0.1612 * Math.Pow(rating, 1.2477);
+            if (rating > 6.2754) rating = 6.2754 + (rating - 6.2754) * 0.7;
+            return 5.7887 * rating;
         }
 
-        private static double StarsWithoutBonus(double pp) => pp > 0 ? 1.1653 * Math.Pow(pp / 83.6925, 1.17507) : pp / 83.6925;
-        private static double LowStarMultiplier(double value) => value >= 8.6454 ? 1 : 1 + 0.0063371 * Math.Pow(8.6454 - Math.Max(value, 0), 1.36);
+        private static double StarsWithoutBonus(double pp) => pp / 52;
+        private static double LowStarMultiplier(double value) => value >= 8.8584 ? 1 : 1 + 0.007593 * Math.Pow(8.8584 - Math.Max(value, 0), 1.98);
+
+        private static double PassAccMultiplier(double accuracy, double prediction) => prediction > 0
+            ? Math.Min(Math.Max(Math.Exp(6 * (accuracy - (2 * prediction - 1))), 0.8), 3) : 1;
+
+        private static double Ease(double value)
+        {
+            double t = Math.Min(Math.Max(value, 0), 1);
+            return t * t * (3 - 2 * t);
+        }
+
+        private static double MidStarTopMultiplier(double value, double accuracy, double prediction)
+        {
+            if (!(prediction > 0) || !(value > 4.2508 && value < 10.5) || !(accuracy > prediction - 0.03)) return 1;
+            double bump = value < 6.3762 ? Ease((value - 4.2508) / (6.3762 - 4.2508))
+                : value > 8 ? Ease((10.5 - value) / (10.5 - 8)) : 1;
+            return 1 + 0.05 * bump * Ease((accuracy - (prediction - 0.03)) / 0.03);
+        }
 
         private static double CurvePower(double value)
         {
-            if (value < 4.803)
-                return value <= 2.8818 ? 1.08 : 1.08 - 0.08 * (value - 2.8818) / (4.803 - 2.8818);
-            if (value >= 9.606) return 0.9;
-            return value <= 6.7242 ? 1 : 1 - 0.1 * (value - 6.7242) / (9.606 - 6.7242);
+            if (value < 5.3718)
+                return value <= 3.478 ? 1.08 : 1.08 - 0.08 * (value - 3.478) / (5.3718 - 3.478);
+            if (value >= 9.6894) return 0.9;
+            return value <= 7.1529 ? 1 : 1 - 0.1 * (value - 7.1529) / (9.6894 - 7.1529);
         }
 
         private double Value(double accuracy) => Interpolate(points, accuracy);
@@ -187,6 +211,19 @@ namespace PPPredictor.Core.DataType.Curve
 
         private static double Round6(double value) => Math.Floor(value * 1e6 + 0.5) / 1e6;
 
+        private static double TableFactor(AnalyticCurve standard, double x)
+        {
+            double reference = standard.Value(x);
+            return reference > 0 ? SmoothValue(x) / reference : 0;
+        }
+
+        private static double TopTableFactor(AnalyticCurve standard, double a, double x)
+        {
+            const double h = 1e-5;
+            double atA = TableFactor(standard, a);
+            return atA + (atA - TableFactor(standard, a - h)) / h * (x - a);
+        }
+
         private static (double X, double Y)[] BuildCurve(PPPStarRating rating)
         {
             double prediction = rating.PredictedAcc;
@@ -194,7 +231,7 @@ namespace PPPredictor.Core.DataType.Curve
             double[] row = Parameters(prediction);
             bool modified = dynamic && !(row[1] >= 0.9995 && row[3] == 4.86 && row[4] == 0.6 && row[5] == 2.88 && row[6] == 2.46);
             double tilt = dynamic ? 0.2 * rating.SliderPercentage : 0;
-            double nerf = Nerf(rating.Notes, 115, 20, 0.95) * Nerf(rating.NoteSpan.GetValueOrDefault(), 75, 12, 0.9);
+            double nerf = Nerf(rating.Notes, 115, 20, 0.8031) * Nerf(rating.NoteSpan.GetValueOrDefault(), 75, 12, 0.9);
             if (!modified && tilt == 0) return BaseTable.Select(p => (p.X, p.Y * nerf)).ToArray();
             var standard = new AnalyticCurve();
             var curve = new AnalyticCurve(Math.Min(Math.Max(row[1], 0.951), 1), Math.Min(row[2], 1), row[3], row[4], row[5], row[6]);
@@ -207,8 +244,9 @@ namespace PPPredictor.Core.DataType.Curve
                 double value = Interpolate(BaseTable, x);
                 if (modified)
                 {
-                    double basis = SmoothValue(x), reference = standard.Value(x);
-                    value = Math.Min(basis, reference > 0 ? basis * curve.Value(x) / reference : basis);
+                    double basis = SmoothValue(x);
+                    double factor = curve.A < 0.9995 && x > curve.A ? TopTableFactor(standard, curve.A, x) : TableFactor(standard, x);
+                    value = Math.Min(basis, factor > 0 ? curve.Value(x) * factor : basis);
                 }
                 if (tilt != 0) value *= Math.Exp(tilt * Math.Min(Math.Max(x - prediction, -0.015), 0.015) * 100);
                 return (x, value * nerf);

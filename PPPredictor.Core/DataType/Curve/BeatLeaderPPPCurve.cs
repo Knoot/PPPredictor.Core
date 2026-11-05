@@ -66,6 +66,7 @@ namespace PPPredictor.Core.DataType.Curve
                                 if (curves.Count >= 64) curves.Clear();
                                 curves[key] = curve = new BeatLeaderV4Curve(rating);
                             }
+                            if (!curve.MatchesReportedStars(rating.Stars)) return 0;
                             return curve.Calculate(percentage, rating, leaderboardContext == LeaderboardContext.BeatLeaderGolf);
                         }
                         var (passPP, accPP, techPP) = CalculatePP(percentage, beatMapInfo.ModifiedStarRating.AccRating * beatMapInfo.ModifiedStarRating.Multiplier, beatMapInfo.ModifiedStarRating.PassRating * beatMapInfo.ModifiedStarRating.Multiplier, beatMapInfo.ModifiedStarRating.TechRating * beatMapInfo.ModifiedStarRating.Multiplier, leaderboardContext);

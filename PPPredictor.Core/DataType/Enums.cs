@@ -44,7 +44,8 @@
             None,
             RequiresSmallCubesAndProMode,
             ModifiersNotAllowed,
-            NegativeModifiersNotAllowed
+            NegativeModifiersNotAllowed,
+            IncompatibleBeatLeaderRatings
         }
 
         public enum CurveType

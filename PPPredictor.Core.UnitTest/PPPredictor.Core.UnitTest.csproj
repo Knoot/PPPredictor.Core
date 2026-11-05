@@ -22,6 +22,7 @@
 
   <ItemGroup>
     <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
+    <EmbeddedResource Include="Data\Curve\BeatLeaderV42Fixtures.json" />
   </ItemGroup>
 
   <ItemGroup>

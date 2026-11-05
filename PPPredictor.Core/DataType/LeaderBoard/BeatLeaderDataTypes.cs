@@ -53,6 +53,7 @@ namespace PPPredictor.Core.DataType.LeaderBoard
             public double? sliderPercentage { get; set; }
             public int notes { get; set; }
             public double? noteSpan { get; set; }
+            public int? ppVersion { get; set; }
             public double? passRating { get; set; }
             public double? accRating { get; set; }
             public double? techRating { get; set; }

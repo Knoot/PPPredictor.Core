@@ -23,6 +23,7 @@ namespace PPPredictor.Core.Calculator
         private readonly TimedAsyncCache<BeatLeaderSong> songCache;
         private readonly Func<DateTime> utcNow;
         internal static float accumulationConstant = 0.965f;
+        internal const int FormulaRevision = BeatLeaderV4Curve.FormulaRevision;
         private const float accumulationConstantEvent = 0.925f;
         private const string AccRating = "AccRating";
         private const string PassRating = "PassRating";
@@ -38,17 +39,29 @@ namespace PPPredictor.Core.Calculator
             beatleaderapi = api;
             this.utcNow = utcNow ?? (() => DateTime.UtcNow);
             songCache = new TimedAsyncCache<BeatLeaderSong>(settings?.MapInfoCacheDuration ?? TimeSpan.FromMinutes(5), this.utcNow);
-            foreach (var pool in _dctMapPool.Values.Where(x => x.BeatLeaderPPVersion < 4))
+            foreach (var pool in _dctMapPool.Values.Where(x => x.BeatLeaderFormulaRevision != FormulaRevision))
             {
-                pool.LsScores.Clear();
+                bool hadData = pool.HasScoreDataFetched || pool.SessionPlayer != null || pool.LsLeaderboadInfo.Count > 0;
+                // Keep the old score snapshot for recovery, but never use it for gain until a full sync commits.
                 pool.LsLeaderboadInfo.Clear();
-                pool.DctScorePositionLookup.Clear();
                 pool.HasScoreDataFetched = false;
-                pool.DtLastScoreSet = new DateTime(2000, 1, 1);
                 pool.DtUtcLastRefresh = new DateTime(2000, 1, 1);
-                pool.CurrentPlayer = new PPPPlayer();
                 pool.SessionPlayer = null;
+                pool.BeatLeaderSessionRebasePending = true;
+                pool.LsPlayerRankings.Clear();
+                pool.PlayerRankingsFetchedAtUtc = DateTime.MinValue;
+                pool.PlayerRankingsRetryAfterUtc = DateTime.MinValue;
+                pool.ScoresRequireRefresh = true;
+                pool.ScoreSync.HasCompleteScores = false;
+                pool.ScoreSync.LastFullSyncUtc = DateTime.MinValue;
+                pool.ScoreSync.RetryAfterUtc = DateTime.MinValue;
+                pool.ScoreSync.ResetMismatch();
+                // A rebalance invalidates PP thresholds, not the identity or raw score of an unconfirmed play.
+                foreach (var expected in pool.ScoreSync.ExpectedScores.Values) expected.pp = null;
+                pool.ScoreSync.Request(FullScoreSyncReason.RatingChanged);
                 pool.BeatLeaderPPVersion = 4;
+                pool.BeatLeaderFormulaRevision = FormulaRevision;
+                if (hadData) Logging.InfoPrint("BeatLeader PPv4.2: invalidated previous formula cache and session baseline; full score sync required.");
             }
         }
 
@@ -190,6 +203,7 @@ namespace PPPredictor.Core.Calculator
             double accRating = beatMapInfo.BaseStarRating.AccRating;
             double passRating = beatMapInfo.BaseStarRating.PassRating;
             double techRating = beatMapInfo.BaseStarRating.TechRating;
+            double reportedStars = beatMapInfo.BaseStarRating.Stars;
             double predictedAcc = beatMapInfo.BaseStarRating.PredictedAcc;
             double sliderPercentage = beatMapInfo.BaseStarRating.SliderPercentage;
             double? noteSpan = beatMapInfo.BaseStarRating.NoteSpan;
@@ -202,10 +216,12 @@ namespace PPPredictor.Core.Calculator
                         accRating = beatMapInfo.BaseStarRating.ModifiersRating[modifier + AccRating];
                         passRating = beatMapInfo.BaseStarRating.ModifiersRating[modifier + PassRating];
                         techRating = beatMapInfo.BaseStarRating.ModifiersRating[modifier + TechRating];
+                        beatMapInfo.BaseStarRating.ModifiersRating.TryGetValue(modifier + "Stars", out reportedStars);
                         if (modifier == "ss" || modifier == "fs" || modifier == "sf")
                         {
                             beatMapInfo.BaseStarRating.ModifiersRating.TryGetValue(modifier + "PredictedAcc", out predictedAcc);
-                            beatMapInfo.BaseStarRating.ModifiersRating.TryGetValue(modifier + "SliderPercentage", out sliderPercentage);
+                            if (beatMapInfo.BaseStarRating.ModifiersRating.TryGetValue(modifier + "SliderPercentage", out double speedSliders))
+                                sliderPercentage = speedSliders;
                             noteSpan /= modifier == "ss" ? 0.85 : modifier == "fs" ? 1.2 : 1.5;
                         }
 
@@ -221,8 +237,16 @@ namespace PPPredictor.Core.Calculator
                 PredictedAcc = predictedAcc,
                 SliderPercentage = sliderPercentage,
                 Notes = beatMapInfo.BaseStarRating.Notes,
-                NoteSpan = noteSpan
+                NoteSpan = noteSpan,
+                Stars = reportedStars,
+                BeatLeaderServerPPVersion = beatMapInfo.BaseStarRating.BeatLeaderServerPPVersion
             };
+            if (noteSpan.HasValue && reportedStars > 0 && beatMapInfo.ModifiedStarRating.IsRanked()
+                && !new BeatLeaderV4Curve(beatMapInfo.ModifiedStarRating).MatchesReportedStars(reportedStars))
+            {
+                beatMapInfo.CalculationBlockReason = PPCalculationBlockReason.IncompatibleBeatLeaderRatings;
+                beatMapInfo.ModifiedStarRating.Multiplier = 0;
+            }
             return beatMapInfo;
         }
 
@@ -356,7 +380,7 @@ namespace PPPredictor.Core.Calculator
                 {
                     if (blEvent.dtEndDate >= dateCutoff)
                     {
-                        PPPMapPool insertMapPool = new PPPMapPool(blEvent.id.ToString(), blEvent.playListId.ToString(), MapPoolType.Custom, $"Event {blEvent.name}", accumulationConstantEvent, (int.MaxValue - blEvent.id), new BeatLeaderPPPCurve(), blEvent.image) { BeatLeaderPPVersion = 4 };
+                        PPPMapPool insertMapPool = new PPPMapPool(blEvent.id.ToString(), blEvent.playListId.ToString(), MapPoolType.Custom, $"Event {blEvent.name}", accumulationConstantEvent, (int.MaxValue - blEvent.id), new BeatLeaderPPPCurve(), blEvent.image) { BeatLeaderPPVersion = 4, BeatLeaderFormulaRevision = FormulaRevision };
                         if (!_dctMapPool.ContainsKey(insertMapPool.Id)) _dctMapPool.Add(insertMapPool.Id, insertMapPool);
                     }
                 }
@@ -369,7 +393,7 @@ namespace PPPredictor.Core.Calculator
         {
             if (!_dctMapPool.TryGetValue(id, out PPPMapPool mapPool))
             {
-                _dctMapPool.Add(id, new PPPMapPool(id, MapPoolType.Default, name, accumulationConstant, sortIndex, new BeatLeaderPPPCurve(), leaderboardContext) { BeatLeaderPPVersion = 4 });
+                _dctMapPool.Add(id, new PPPMapPool(id, MapPoolType.Default, name, accumulationConstant, sortIndex, new BeatLeaderPPPCurve(), leaderboardContext) { BeatLeaderPPVersion = 4, BeatLeaderFormulaRevision = FormulaRevision });
                 return;
             }
 

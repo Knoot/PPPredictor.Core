@@ -39,6 +39,9 @@ namespace PPPredictor.Core.DataType.MapPool
 
         public string MapPoolName { get => _mapPoolName; set => _mapPoolName = value; }
         public int BeatLeaderPPVersion { get; set; }
+        // Local implementation revision, not the server's difficulty.ppVersion.
+        public int BeatLeaderFormulaRevision { get; set; }
+        public bool BeatLeaderSessionRebasePending { get; set; }
         public ScoreSyncState ScoreSync { get; set; } = new ScoreSyncState();
         public float AccumulationConstant { get => _accumulationConstant; set => _accumulationConstant = value; }
         public int SortIndex { get => _sortIndex; set => _sortIndex = value; }
