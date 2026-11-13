@@ -34,7 +34,7 @@ namespace UnitTests.Data
             Assert.AreEqual(leaderboardInfo.LeaderboardFirstPageIndex, 1);
             Assert.IsTrue(leaderboardInfo.IsCountryRankEnabled);
             Assert.IsNotNull(leaderboardInfo.LeaderboardIcon);
-            Assert.AreEqual(leaderboardInfo.LargePageSize, 10, "LargePageSize should be 10");
+            Assert.AreEqual(leaderboardInfo.LargePageSize, 100, "Full score sync should use 100 results per page.");
             Assert.AreEqual(leaderboardInfo.PlayerPerPages, 50, "PlayerPerPages should be 10");
             Assert.IsFalse(leaderboardInfo.HasGetAllScoresFunctionality, "HasGetAllScoresFunctionality should be false");
             Assert.IsTrue(leaderboardInfo.HasGetRecentScoresFunctionality, "HasGetRecentScoresFunctionality should be true");

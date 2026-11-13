@@ -51,6 +51,7 @@ namespace PPPredictor.Core.DataType.LeaderBoard
             {
                 case Leaderboard.ScoreSaber:
                     _leaderboardIcon = "PPPredictor.Resources.LeaderBoardLogos.ScoreSaber.png";
+                    _largePageSize = 100;
                     _playerPerPages = 50;
                     _hasOldDotRanking = false;
                     break;

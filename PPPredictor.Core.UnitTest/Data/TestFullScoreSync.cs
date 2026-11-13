@@ -21,8 +21,9 @@ namespace UnitTests.Data
             internal static Func<int, Task<ScoreSaberPlayerScoreList>> Fetch = page => Task.FromResult(Page(page));
             internal static bool FailProfile;
             internal static int Calls;
+            internal static int? LastLimit;
             Task<ScoreSaberPlayerScoreList> IScoresaberAPI.GetPlayerScores(string id, int? limit, int? page)
-            { Interlocked.Increment(ref Calls); return Fetch(page ?? 1); }
+            { Interlocked.Increment(ref Calls); LastLimit = limit; return Fetch(page ?? 1); }
             Task<ScoreSaberPlayer> IScoresaberAPI.GetPlayer(long id) => FailProfile
                 ? throw new IOException("profile offline") : Task.FromResult(new ScoreSaberPlayer { pp = 500, rank = 10 });
         }
@@ -40,7 +41,7 @@ namespace UnitTests.Data
         }
 
         [TestInitialize]
-        public void Initialize() { Api.Calls = 0; Api.FailProfile = false; Api.Fetch = page => Task.FromResult(Page(page)); }
+        public void Initialize() { Api.Calls = 0; Api.LastLimit = null; Api.FailProfile = false; Api.Fetch = page => Task.FromResult(Page(page)); }
 
         private static ScoreSaberPlayerScoreList Page(int page) => new()
         {
@@ -74,6 +75,37 @@ namespace UnitTests.Data
                 new Settings(true, beatLeader, false, false, "123", PPGainCalculationType.Weighted,
                     MapPoolSorting.Alphabetical, "", -7, DateTime.Now.AddHours(-1), 12),
                 new() { ["ScoreSaber"] = new LeaderboardData { DctMapPool = new() { [pool.Id] = pool } } }, _ => new PPPBeatMapInfo());
+
+        [TestMethod]
+        public async Task ScoreSaberFullSyncUsesHundredItemPagesAndStopsOnPartialLastPage()
+        {
+            var pool = Pool();
+            var calculator = await Create(pool);
+            var progress = new List<(int Loaded, int Total)>();
+            Api.Fetch = page => Task.FromResult(new ScoreSaberPlayerScoreList
+            {
+                metadata = new ScoreSaberScoreListMetadata { page = page, itemsPerPage = 100, total = 201 },
+                playerScores = Enumerable.Range((page - 1) * 100, Math.Min(100, 201 - (page - 1) * 100))
+                    .Select(index => new ScoreSaberPlayerScore
+                    {
+                        score = new ScoreSaberScore { pp = 100, timeSet = DateTimeOffset.UtcNow.AddDays(-index) },
+                        leaderboard = new ScoreSaberLeaderboardInfo { songHash = "MAP" + index,
+                            difficulty = new ScoreSaberDifficulty { gameMode = "SoloStandard", difficulty = 9 } }
+                    }).ToList()
+            });
+            try
+            {
+                calculator.RequestFullScoreSync(Leaderboard.ScoreSaber, "-1", FullScoreSyncReason.Overdue);
+                Assert.IsTrue(await calculator.SynchronizeScores(Leaderboard.ScoreSaber, "-1", default,
+                    (loaded, total) => progress.Add((loaded, total))));
+                Assert.AreEqual(100, Api.LastLimit);
+                Assert.AreEqual(3, Api.Calls);
+                Assert.AreEqual(201, pool.LsScores.Count);
+                CollectionAssert.AreEqual(new[] { (100, 201), (200, 201), (201, 201) }, progress.ToArray());
+                Assert.AreEqual(FullScoreSyncReason.None, pool.ScoreSync.PendingReason);
+            }
+            finally { await calculator.ShutdownAsync(); }
+        }
 
         [TestMethod]
         public async Task FullSyncReplacesSnapshotAndDuplicateRequestsDoNotReloadIt()
