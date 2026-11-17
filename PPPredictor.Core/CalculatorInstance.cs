@@ -205,6 +205,13 @@ namespace PPPredictor.Core
             return i;
         }
 
+        public async Task<RankGainResult> GetPlayerRankGain(Leaderboard leaderBoard, string mapPoolId, PPGainResult prediction)
+        {
+            (PPCalculator calculator, PPPMapPool mapPool) = GetCalculatorAndMapPool(leaderBoard, mapPoolId);
+            return await SemaphoreFunction(calculator.Semaphore,
+                () => Task.Run(() => calculator.GetPlayerRankGain(prediction.PpTotal, mapPool, prediction)));
+        }
+
         public PPGainResult GetPlayerScorePPGain(Leaderboard leaderBoard, string mapPoolId, string mapSearchString, double pp)
         {
             (PPCalculator calculator, PPPMapPool mapPool) = GetCalculatorAndMapPool(leaderBoard, mapPoolId);

@@ -11,8 +11,10 @@ namespace UnitTests.Data
             RankGainResult ppGainResult = new RankGainResult();
             Assert.IsTrue(ppGainResult.RankGlobal == -1, "RankGlobal should be -1");
             Assert.IsTrue(ppGainResult.RankCountry == -1, "RankCountry should be -1");
-            Assert.IsTrue(ppGainResult.RankGainGlobal == -1, "RankGainGlobal should be -1");
-            Assert.IsTrue(ppGainResult.RankGainCountry == -1, "RankGainCountry should be -1");
+            Assert.AreEqual(0, ppGainResult.RankGainGlobal, "An unknown rank is not a lost place");
+            Assert.AreEqual(0, ppGainResult.RankGainCountry, "An unknown rank is not a lost place");
+            Assert.IsFalse(ppGainResult.HasGlobalRank);
+            Assert.IsFalse(ppGainResult.HasCountryRank);
             Assert.IsFalse(ppGainResult.IsRankGainCanceledByLimit, "IsRankGainCanceledByLimit should be false");
         }
         [TestMethod]

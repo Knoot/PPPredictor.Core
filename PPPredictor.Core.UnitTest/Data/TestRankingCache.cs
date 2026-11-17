@@ -29,6 +29,107 @@ namespace UnitTests.Data
         private static PPPMapPool Pool() => new() { CurrentPlayer = Player(50, 1000) };
 
         [TestMethod]
+        public async Task ZeroGainKeepsRanksEvenIfProfileChangedWhilePredictionWasQueued()
+        {
+            var pool = Pool();
+            var calculator = new Calculator(pool);
+            var prediction = new PPGainResult(1100, 0, 0, PPGainCalculationType.Weighted);
+            var result = await calculator.GetPlayerRankGain(prediction.PpTotal, pool, prediction);
+            Assert.AreEqual(50, result.RankGlobal);
+            Assert.AreEqual(50, result.RankCountry);
+            Assert.AreEqual(0, result.RankGainGlobal);
+            Assert.AreEqual(0, result.RankGainCountry);
+            Assert.AreEqual(0, calculator.Calls);
+        }
+
+        [TestMethod]
+        public async Task PositivePredictionFromAnotherProfileIsNotUsed()
+        {
+            var pool = Pool();
+            var calculator = new Calculator(pool);
+            var prediction = new PPGainResult(1150, 50, 50, PPGainCalculationType.Weighted);
+            var result = await calculator.GetPlayerRankGain(prediction.PpTotal, pool, prediction);
+            Assert.IsFalse(result.HasGlobalRank);
+            Assert.AreEqual(0, calculator.Calls);
+        }
+
+        [TestMethod]
+        public async Task PositiveGainCannotWorsenRanksWhenLeaderboardAndProfileDisagree()
+        {
+            var pool = Pool();
+            var calculator = new Calculator(pool) { Fetch = page => Players(page, 100) };
+            var result = await calculator.GetPlayerRankGain(1050, pool);
+            Assert.AreEqual(50, result.RankGlobal);
+            Assert.AreEqual(50, result.RankCountry);
+            Assert.AreEqual(0, result.RankGainGlobal);
+            Assert.AreEqual(0, result.RankGainCountry);
+        }
+
+        [TestMethod]
+        public async Task MissingCountryInFetchedRangeIsUnknownInsteadOfFakeGain()
+        {
+            var pool = Pool();
+            var calculator = new Calculator(pool)
+            {
+                Fetch = page => Players(page).Select(x => { x.Country = "DE"; return x; }).ToList()
+            };
+            var result = await calculator.GetPlayerRankGain(1050, pool);
+            Assert.AreEqual(48, result.RankGlobal);
+            Assert.IsFalse(result.HasCountryRank);
+            Assert.AreEqual(0, result.RankGainCountry);
+        }
+
+        [TestMethod]
+        public async Task InvalidCountryRanksAreNotPredictedAsFirstPlace()
+        {
+            var pool = Pool();
+            var calculator = new Calculator(pool)
+            {
+                Fetch = page => Players(page).Select(x => { x.CountryRank = 0; return x; }).ToList()
+            };
+            var result = await calculator.GetPlayerRankGain(1050, pool);
+            Assert.AreEqual(48, result.RankGlobal);
+            Assert.IsFalse(result.HasCountryRank);
+        }
+
+        [TestMethod]
+        public async Task RankComparisonDoesNotRoundRivalPpDown()
+        {
+            var pool = Pool();
+            var calculator = new Calculator(pool)
+            {
+                Fetch = page => Players(page).Select(x => { if (x.Rank == 48) x.Pp = 1050.004; return x; }).ToList()
+            };
+            var result = await calculator.GetPlayerRankGain(1050.001, pool);
+            Assert.AreEqual(49, result.RankGlobal);
+            Assert.AreEqual(49, result.RankCountry);
+        }
+
+        [TestMethod]
+        public async Task ProfileChangeDuringFetchDoesNotCommitStaleRankings()
+        {
+            var pool = Pool();
+            var calculator = new Calculator(pool)
+            {
+                Fetch = page => { pool.CurrentPlayer = Player(49, 1020); return Players(page); }
+            };
+            var result = await calculator.GetPlayerRankGain(1050, pool);
+            Assert.IsFalse(result.HasGlobalRank);
+            Assert.AreEqual(DateTime.MinValue, pool.PlayerRankingsFetchedAtUtc);
+            Assert.AreEqual(0, pool.LsPlayerRankings.Count);
+        }
+
+        [TestMethod]
+        public void UnknownRankResultDoesNotRepresentLostPlaces()
+        {
+            var result = new RankGainResult();
+            Assert.IsFalse(result.HasGlobalRank);
+            Assert.IsFalse(result.HasCountryRank);
+            Assert.AreEqual(0, result.RankGainGlobal);
+            Assert.AreEqual(0, result.RankGainCountry);
+        }
+
+        [TestMethod]
         public async Task ExpiredRankingsAreRefetchedAndReadsDoNotExtendLifetime()
         {
             var now = DateTime.UtcNow;

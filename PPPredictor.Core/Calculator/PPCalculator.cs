@@ -392,7 +392,7 @@ namespace PPPredictor.Core.Calculator
                 : new PPGainResult(currentTotalPP, 0, 0, _settings.PpGainCalculationType);
         }
 
-        internal async Task<RankGainResult> GetPlayerRankGain(double pp, PPPMapPool mapPool)
+        internal async Task<RankGainResult> GetPlayerRankGain(double pp, PPPMapPool mapPool, PPGainResult prediction = null)
         {
             DateTime now = RankCacheUtcNow();
             try
@@ -403,6 +403,14 @@ namespace PPPredictor.Core.Calculator
                 lock (mapPool.DataLock)
                 {
                     player = mapPool.CurrentPlayer;
+                    if (prediction != null)
+                    {
+                        if (prediction.PpGainWeighted <= 0)
+                            return new RankGainResult(player.Rank, player.CountryRank, player);
+                        // Do not compare a prediction based on an older profile with fresh rankings.
+                        if (Math.Abs(prediction.PpTotal - prediction.PpGainWeighted - player.Pp) > 0.0000001)
+                            return new RankGainResult();
+                    }
                     fetchedAt = mapPool.PlayerRankingsFetchedAtUtc;
                     var age = now - fetchedAt;
                     rankings = age >= TimeSpan.Zero && age < _settings.PlayerRankingCacheDuration
@@ -462,9 +470,10 @@ namespace PPPredictor.Core.Calculator
                     await Task.Delay(_leaderboardInfo.TaskDelayValue, NetworkUtil.RequestCancellation);
                 }
                 NetworkUtil.RequestCancellation.ThrowIfCancellationRequested();
-                if (pageFetchCount > 0)
+                lock (mapPool.DataLock)
                 {
-                    lock (mapPool.DataLock)
+                    if (!ReferenceEquals(player, mapPool.CurrentPlayer)) return new RankGainResult();
+                    if (pageFetchCount > 0)
                     {
                         mapPool.LsPlayerRankings = rankings;
                         mapPool.PlayerRankingsFetchedAtUtc = fetchedAt != DateTime.MinValue
@@ -472,8 +481,12 @@ namespace PPPredictor.Core.Calculator
                         mapPool.PlayerRankingsRetryAfterUtc = DateTime.MinValue;
                     }
                 }
-                double rankAfterPlay = rankings.Where(x => Math.Round(x.Pp, 2, MidpointRounding.AwayFromZero) <= pp).Select(x => x.Rank).DefaultIfEmpty(-1).Min();
-                double rankCountryAfterPlay = rankings.Where(x => Math.Round(x.Pp, 2, MidpointRounding.AwayFromZero) <= pp && x.Country == player.Country).Select(x => x.CountryRank).DefaultIfEmpty(-1).Min();
+                double rankAfterPlay = Math.Min(player.Rank, rankings.Where(x => x.Pp <= pp)
+                    .Select(x => x.Rank).DefaultIfEmpty(player.Rank).Min());
+                double rankCountryAfterPlay = rankAfterPlay == player.Rank ? player.CountryRank
+                    : rankings.Where(x => x.Pp <= pp && !string.IsNullOrEmpty(player.Country)
+                        && x.Country == player.Country && x.CountryRank > 0)
+                        .Select(x => Math.Min(player.CountryRank, x.CountryRank)).DefaultIfEmpty(-1).Min();
                 return new RankGainResult(rankAfterPlay, rankCountryAfterPlay, player, pageFetchCount >= _leaderboardInfo.PageFetchLimit);
             }
             catch (OperationCanceledException) when (NetworkUtil.RequestCancellation.IsCancellationRequested) { throw; }
